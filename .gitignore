@@ -1,0 +1,21 @@
+# --- Real household data & third-party docs: keep locally, NEVER commit ---
+# This repo is PUBLIC and GitHub-Pages hosted. Real NEM12/CSV interval data
+# exposes the NMI, meter serials, and occupancy patterns; the Origin PDFs are
+# copyrighted. Use synthetic/redacted fixtures for committed tests instead.
+Example Files/
+docs/*.pdf
+
+# --- Node / Vite toolchain (stack per ADR-0013) ---
+node_modules/
+dist/
+dist-ssr/
+*.local
+.vite/
+coverage/
+
+# --- Editor / OS ---
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json

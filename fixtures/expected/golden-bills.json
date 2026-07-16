@@ -1,0 +1,45 @@
+{
+  "_note": "Hand-computed expected results for nem12-golden.csv + the two demo plans, under the golden register mapping. This is the golden calibration/engine test oracle (ADR-0015). All cents are exact; per ADR-0004 only the final total is rounded (here every component is already whole cents, so no rounding occurs).",
+  "source": {
+    "usageFile": "nem12/nem12-golden.csv",
+    "mapping": "mapping/golden-register-mapping.json"
+  },
+  "period": {
+    "start": "2025-07-01",
+    "end": "2025-07-02",
+    "daysInclusive": 2,
+    "note": "Both days are weekdays (Tue, Wed), so the TOU peak band applies on both."
+  },
+  "usageKwh": {
+    "generalPeak": 20,
+    "generalOffpeak": 38,
+    "generalTotal": 58,
+    "cl1": 4,
+    "cl2": 0,
+    "generation": 8
+  },
+  "expectedBills": {
+    "plan-flat-demo": {
+      "supplyCents": 210,
+      "generalUsageCents": 1740,
+      "cl1Cents": 80,
+      "cl2Cents": 0,
+      "solarCreditCents": 40,
+      "totalCents": 1990,
+      "totalDollars": 19.90,
+      "breakdown": "supply (100+5)*2=210 + general 58*30=1740 + cl1 4*20=80 - solar 8*5=40"
+    },
+    "plan-tou-demo": {
+      "supplyCents": 230,
+      "generalPeakCents": 1000,
+      "generalOffpeakCents": 950,
+      "generalUsageCents": 1950,
+      "cl1Cents": 80,
+      "cl2Cents": 0,
+      "solarCreditCents": 40,
+      "totalCents": 2220,
+      "totalDollars": 22.20,
+      "breakdown": "supply (110+5)*2=230 + peak 20*50=1000 + offpeak 38*25=950 + cl1 4*20=80 - solar 8*5=40"
+    }
+  }
+}

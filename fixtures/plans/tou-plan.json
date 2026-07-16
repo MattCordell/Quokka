@@ -1,0 +1,41 @@
+{
+  "id": "plan-tou-demo",
+  "name": "Demo TOU Peak/Off-peak",
+  "retailer": "Synthetic Energy Co",
+  "type": "time_of_use",
+  "supply": {
+    "generalCentsPerDay": 110,
+    "cl1CentsPerDay": 5,
+    "cl2CentsPerDay": 0
+  },
+  "touBands": [
+    {
+      "label": "Peak",
+      "startTime": "16:00",
+      "endTime": "21:00",
+      "rateCentsPerKwh": 50,
+      "days": ["MON", "TUE", "WED", "THU", "FRI"]
+    },
+    {
+      "label": "Off-peak (weekday)",
+      "startTime": "21:00",
+      "endTime": "16:00",
+      "rateCentsPerKwh": 25,
+      "days": ["MON", "TUE", "WED", "THU", "FRI"]
+    },
+    {
+      "label": "Off-peak (weekend)",
+      "startTime": "00:00",
+      "endTime": "24:00",
+      "rateCentsPerKwh": 25,
+      "days": ["SAT", "SUN"]
+    }
+  ],
+  "controlledLoad": {
+    "cl1RateCentsPerKwh": 20,
+    "cl2RateCentsPerKwh": 0
+  },
+  "feedInRateCentsPerKwh": 5,
+  "discounts": [],
+  "_note": "Bands are half-open [startTime,endTime) aligned to the interval grid (ADR-0001). The weekday off-peak band wraps midnight (21:00->16:00). '24:00' is the end-of-day exclusive sentinel. These three bands cover all 168 weekly hours exactly once."
+}

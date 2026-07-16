@@ -1,0 +1,9 @@
+{
+  "nmi": "6407000000",
+  "_note": "Register -> Usage Category mapping for nem12-golden.csv (ADR-0011: many registers may share a category; a category may have none).",
+  "registers": {
+    "E1": "General",
+    "B1": "Generation",
+    "E3": "CL1"
+  }
+}
