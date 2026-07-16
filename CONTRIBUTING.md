@@ -27,7 +27,7 @@ Create a dedicated branch when work starts on an issue. Suggested naming: `issue
 
 ## 5. Review before merge
 
-Every PR gets reviewed before merging — run [`/code-review`](.claude) (or `/review` for an already-open PR) over the diff as the review pass. Since this is currently a solo-maintained repo, self-review via the review skill stands in for a second pair of eyes; treat its findings the same as a human reviewer's.
+Every PR gets reviewed before merging — run `/code-review` (or `/review` for an already-open PR) over the diff as the review pass. Since this is currently a solo-maintained repo, self-review via the review skill stands in for a second pair of eyes; treat its findings the same as a human reviewer's.
 
 **Merge bar: no major defects.** Major = wrong calc/money math, breaks the golden calibration test, violates an accepted ADR, leaks real usage data into the public repo, or breaks CI. Minor nits (naming, a missing test for an edge case that isn't load-bearing, style) don't have to block merge — file a quick follow-up issue instead of stalling the PR.
 
