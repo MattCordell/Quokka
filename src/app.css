@@ -1,0 +1,37 @@
+:root {
+  color-scheme: light dark;
+  font-family:
+    system-ui,
+    -apple-system,
+    'Segoe UI',
+    sans-serif;
+}
+
+body {
+  margin: 0;
+}
+
+nav {
+  display: flex;
+  gap: 0.5rem;
+  padding: 1rem;
+  border-bottom: 1px solid #8883;
+}
+
+nav button {
+  font: inherit;
+  padding: 0.5rem 1rem;
+  border: 1px solid #8886;
+  border-radius: 0.375rem;
+  background: transparent;
+  cursor: pointer;
+}
+
+nav button[aria-current='true'] {
+  background: #8882;
+  font-weight: 600;
+}
+
+main {
+  padding: 1rem;
+}

@@ -1,0 +1,13 @@
+dist/
+node_modules/
+coverage/
+package-lock.json
+fixtures/
+docs/
+Example Files/
+
+# Pre-existing docs/config predating Prettier adoption in this PR — out of scope to reformat
+CONTRIBUTING.md
+electricity-comparison-tool-PRD.md
+.github/dependabot.yml
+.github/ISSUE_TEMPLATE/
