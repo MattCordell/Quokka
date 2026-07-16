@@ -1,0 +1,21 @@
+{
+  "id": "plan-flat-demo",
+  "name": "Demo Flat 30",
+  "retailer": "Synthetic Energy Co",
+  "type": "flat_rate",
+  "supply": {
+    "generalCentsPerDay": 100,
+    "cl1CentsPerDay": 5,
+    "cl2CentsPerDay": 0
+  },
+  "usage": {
+    "generalRateCentsPerKwh": 30
+  },
+  "controlledLoad": {
+    "cl1RateCentsPerKwh": 20,
+    "cl2RateCentsPerKwh": 0
+  },
+  "feedInRateCentsPerKwh": 5,
+  "discounts": [],
+  "_note": "All rates GST-inclusive (PRD 7.4). CL1 charges apply only if a register is mapped to CL1 (ADR-0002)."
+}
