@@ -1,15 +1,47 @@
 <script lang="ts">
   import { Nem12ParseError, parseNem12 } from '../lib/nem12';
   import type { NmiData, ParsedNem12 } from '../lib/nem12';
+  import { USAGE_CATEGORIES } from '../lib/mapping/types';
+  import type { RegisterMapping, UsageCategory } from '../lib/mapping/types';
+  import { reconcileMapping } from '../lib/mapping/reconcile';
+  import { validateMapping, type MappingIssue } from '../lib/mapping/validate';
+  import { saveUsage, loadMapping, saveMapping, clearAllUsage } from '../lib/storage/persistence';
+  import { averageDayShape } from '../lib/usage/shape';
+  import Sparkline from '../components/Sparkline.svelte';
 
   let error = $state<string | null>(null);
   let parsed = $state<ParsedNem12 | null>(null);
   let selectedNmi = $state<string | null>(null);
   let expandedDay = $state<Record<string, boolean>>({});
 
+  let mapping = $state<RegisterMapping | null>(null);
+  let mappingIssues = $state<MappingIssue[]>([]);
+  let usageSaveWarning = $state<string | null>(null);
+  let mappingSaveWarning = $state<string | null>(null);
+  let confirmingClear = $state(false);
+
   let selected = $derived<NmiData | null>(
     parsed && selectedNmi ? (parsed.nmis.find((n) => n.nmi === selectedNmi) ?? null) : null,
   );
+
+  // On every fresh parse (incl. re-import) of the selected NMI: persist usage (ADR-0008), then
+  // reconcile against any stored Register Mapping so an unchanged re-import needs no re-prompt.
+  $effect(() => {
+    if (!selected) {
+      mapping = null;
+      mappingIssues = [];
+      usageSaveWarning = null;
+      mappingSaveWarning = null;
+      return;
+    }
+    const usageResult = saveUsage(selected);
+    usageSaveWarning = usageResult.ok ? null : usageResult.message;
+
+    const stored = loadMapping(selected.nmi);
+    const reconciled = reconcileMapping(stored, selected);
+    mapping = reconciled;
+    mappingIssues = validateMapping(selected.registers, reconciled).issues;
+  });
 
   async function onFileChange(event: Event) {
     const input = event.currentTarget as HTMLInputElement;
@@ -21,6 +53,7 @@
     parsed = null;
     selectedNmi = null;
     expandedDay = {};
+    confirmingClear = false;
 
     try {
       const text = await file.text();
@@ -35,6 +68,34 @@
   function toggleDay(key: string) {
     expandedDay = { ...expandedDay, [key]: !expandedDay[key] };
   }
+
+  function setCategory(registerId: string, category: UsageCategory) {
+    if (!mapping || !selected) return;
+    const next: RegisterMapping = {
+      ...mapping,
+      registers: { ...mapping.registers, [registerId]: category },
+    };
+    mapping = next;
+    mappingIssues = validateMapping(selected.registers, next).issues;
+
+    // Persist regardless of validation issues: a mismatched interval length is a warning, not
+    // a rejection of the user's choice, and losing it on the next reload/re-import would
+    // silently revert their mapping.
+    const saveResult = saveMapping(next);
+    mappingSaveWarning = saveResult.ok ? null : saveResult.message;
+  }
+
+  function clearUsageData() {
+    clearAllUsage({ includeMapping: true });
+    parsed = null;
+    selectedNmi = null;
+    expandedDay = {};
+    mapping = null;
+    mappingIssues = [];
+    usageSaveWarning = null;
+    mappingSaveWarning = null;
+    confirmingClear = false;
+  }
 </script>
 
 <section>
@@ -48,6 +109,16 @@
 
   {#if error}
     <p class="error" role="alert">{error}</p>
+  {/if}
+
+  {#if usageSaveWarning}
+    <p class="error" role="alert">Could not save usage on this device: {usageSaveWarning}</p>
+  {/if}
+
+  {#if mappingSaveWarning}
+    <p class="error" role="alert">
+      Could not save Register Mapping on this device: {mappingSaveWarning}
+    </p>
   {/if}
 
   {#if parsed && parsed.nmis.length === 0}
@@ -88,6 +159,8 @@
           <th>Days</th>
           <th>Date range</th>
           <th>Total kWh</th>
+          <th>Shape</th>
+          <th>Usage category</th>
           <th><span class="sr-only">Preview</span></th>
         </tr>
       </thead>
@@ -96,6 +169,7 @@
           {@const key = `${selected.nmi}/${register.registerId}/${register.nmiSuffix}`}
           {@const firstDay = register.days[0]}
           {@const lastDay = register.days[register.days.length - 1]}
+          {@const shape = averageDayShape(register)}
           <tr>
             <td>{register.registerId}</td>
             <td>{register.meterSerial}</td>
@@ -104,6 +178,24 @@
             <td>{register.days.length}</td>
             <td>{firstDay?.date} &ndash; {lastDay?.date}</td>
             <td>{register.totalKwh.toFixed(2)}</td>
+            <td><Sparkline values={shape} /></td>
+            <td>
+              <label>
+                <span class="sr-only">Usage category for {register.registerId}</span>
+                <select
+                  value={mapping?.registers[register.registerId] ?? 'Ignore'}
+                  onchange={(e) =>
+                    setCategory(
+                      register.registerId,
+                      (e.currentTarget as HTMLSelectElement).value as UsageCategory,
+                    )}
+                >
+                  {#each USAGE_CATEGORIES as category (category)}
+                    <option value={category}>{category}</option>
+                  {/each}
+                </select>
+              </label>
+            </td>
             <td>
               {#if firstDay}
                 <button type="button" onclick={() => toggleDay(key)}>
@@ -115,7 +207,7 @@
           </tr>
           {#if firstDay && expandedDay[key]}
             <tr>
-              <td colspan="8">
+              <td colspan="10">
                 <code>{firstDay.values.map((v) => v.toFixed(4)).join(', ')}</code>
               </td>
             </tr>
@@ -123,6 +215,29 @@
         {/each}
       </tbody>
     </table>
+
+    {#if mappingIssues.length > 0}
+      <p class="error" role="alert">
+        Register Mapping has issues: {mappingIssues.map((issue) => issue.message).join(' ')}
+      </p>
+    {:else if mapping}
+      <p role="status">Register Mapping confirmed.</p>
+    {/if}
+  {/if}
+
+  {#if parsed}
+    <div class="clear">
+      {#if confirmingClear}
+        <p role="alert">
+          This removes all stored usage and Register Mappings for every NMI on this device. Clearing
+          browser data loses everything regardless — usage never leaves your browser.
+        </p>
+        <button type="button" onclick={clearUsageData}>Confirm clear</button>
+        <button type="button" onclick={() => (confirmingClear = false)}>Cancel</button>
+      {:else}
+        <button type="button" onclick={() => (confirmingClear = true)}>Clear my usage data</button>
+      {/if}
+    </div>
   {/if}
 </section>
 
@@ -154,6 +269,10 @@
 
   fieldset {
     margin-top: 1rem;
+  }
+
+  .clear {
+    margin-top: 1.5rem;
   }
 
   .sr-only {
