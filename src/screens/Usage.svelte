@@ -16,7 +16,8 @@
 
   let mapping = $state<RegisterMapping | null>(null);
   let mappingIssues = $state<MappingIssue[]>([]);
-  let saveWarning = $state<string | null>(null);
+  let usageSaveWarning = $state<string | null>(null);
+  let mappingSaveWarning = $state<string | null>(null);
   let confirmingClear = $state(false);
 
   let selected = $derived<NmiData | null>(
@@ -29,11 +30,12 @@
     if (!selected) {
       mapping = null;
       mappingIssues = [];
-      saveWarning = null;
+      usageSaveWarning = null;
+      mappingSaveWarning = null;
       return;
     }
     const usageResult = saveUsage(selected);
-    saveWarning = usageResult.ok ? null : usageResult.message;
+    usageSaveWarning = usageResult.ok ? null : usageResult.message;
 
     const stored = loadMapping(selected.nmi);
     const reconciled = reconcileMapping(stored, selected);
@@ -74,13 +76,13 @@
       registers: { ...mapping.registers, [registerId]: category },
     };
     mapping = next;
+    mappingIssues = validateMapping(selected.registers, next).issues;
 
-    const result = validateMapping(selected.registers, next);
-    mappingIssues = result.issues;
-    if (result.ok) {
-      const saveResult = saveMapping(next);
-      saveWarning = saveResult.ok ? null : saveResult.message;
-    }
+    // Persist regardless of validation issues: a mismatched interval length is a warning, not
+    // a rejection of the user's choice, and losing it on the next reload/re-import would
+    // silently revert their mapping.
+    const saveResult = saveMapping(next);
+    mappingSaveWarning = saveResult.ok ? null : saveResult.message;
   }
 
   function clearUsageData() {
@@ -90,7 +92,8 @@
     expandedDay = {};
     mapping = null;
     mappingIssues = [];
-    saveWarning = null;
+    usageSaveWarning = null;
+    mappingSaveWarning = null;
     confirmingClear = false;
   }
 </script>
@@ -108,8 +111,14 @@
     <p class="error" role="alert">{error}</p>
   {/if}
 
-  {#if saveWarning}
-    <p class="error" role="alert">Could not save usage on this device: {saveWarning}</p>
+  {#if usageSaveWarning}
+    <p class="error" role="alert">Could not save usage on this device: {usageSaveWarning}</p>
+  {/if}
+
+  {#if mappingSaveWarning}
+    <p class="error" role="alert">
+      Could not save Register Mapping on this device: {mappingSaveWarning}
+    </p>
   {/if}
 
   {#if parsed && parsed.nmis.length === 0}
@@ -160,6 +169,7 @@
           {@const key = `${selected.nmi}/${register.registerId}/${register.nmiSuffix}`}
           {@const firstDay = register.days[0]}
           {@const lastDay = register.days[register.days.length - 1]}
+          {@const shape = averageDayShape(register)}
           <tr>
             <td>{register.registerId}</td>
             <td>{register.meterSerial}</td>
@@ -168,7 +178,7 @@
             <td>{register.days.length}</td>
             <td>{firstDay?.date} &ndash; {lastDay?.date}</td>
             <td>{register.totalKwh.toFixed(2)}</td>
-            <td><Sparkline values={averageDayShape(register)} /></td>
+            <td><Sparkline values={shape} /></td>
             <td>
               <label>
                 <span class="sr-only">Usage category for {register.registerId}</span>
