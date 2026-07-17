@@ -102,7 +102,7 @@ export function parseNem12(text: string): ParsedNem12 {
         const factor = uomFactor(currentRegister.uom, label);
         const dayFlagField = fields[2 + n];
         const dayFlag = dayFlagField?.[0];
-        if (!dayFlag || /^[0-9.]+$/.test(dayFlagField)) {
+        if (!dayFlag || /^-?[0-9.]+$/.test(dayFlagField)) {
           throw new Nem12ParseError(
             `Register ${label} day ${date}: expected ${n} interval values, found more than ${n}`,
           );

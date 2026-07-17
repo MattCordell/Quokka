@@ -145,6 +145,16 @@ describe('300 row validation', () => {
     );
   });
 
+  it('catches an overflow row even when the stray value is negative', () => {
+    // Same misalignment as above, but the stray value lands as '-1' rather than a positive
+    // number — the overflow guard must not mistake it for a (single-char) quality flag.
+    const text = nem12(['200,NMI1,CFG,E1,E1,,SERIAL,kWh,1440,', '300,20250101,1,-1,3,,,']);
+    expect(() => parseNem12(text)).toThrow(Nem12ParseError);
+    expect(() => parseNem12(text)).toThrow(
+      /NMI1\/E1 day 20250101: expected 1 interval values, found more than 1/,
+    );
+  });
+
   it('resolves a whole-day quality method with an appended reason code to its leading letter', () => {
     // A day can be entirely final-substituted without a 400 breakdown, e.g. 'F19' for the
     // whole day. The resolved per-interval quality must still be the single leading letter.
