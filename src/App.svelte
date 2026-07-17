@@ -1,7 +1,6 @@
 <script lang="ts">
   import Plans from './screens/Plans.svelte';
   import Usage from './screens/Usage.svelte';
-  import Compare from './screens/Compare.svelte';
 
   type Tab = 'plans' | 'usage' | 'compare';
   let active = $state<Tab>('plans');
@@ -28,6 +27,8 @@
   {:else if active === 'usage'}
     <Usage />
   {:else}
-    <Compare />
+    {#await import('./screens/Compare.svelte') then { default: Compare }}
+      <Compare />
+    {/await}
   {/if}
 </main>

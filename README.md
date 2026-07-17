@@ -15,6 +15,8 @@ npm install
 npm run dev
 ```
 
+The app is served under the `/Quokka/` base path (matching GitHub Pages); Vite redirects the bare dev-server root there automatically.
+
 ## Verification
 
 ```
