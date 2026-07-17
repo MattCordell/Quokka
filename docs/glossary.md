@@ -65,7 +65,7 @@ Exported energy (solar), on a `B`-suffix register. Credited via the **Feed-in Ra
 
 ### Interval
 One usage reading covering a fixed slice of time (the **Interval Length**, e.g. 5 min) on one **Register**. The atomic unit the **TOU** engine assigns to a **TOU Band** — assignment is by the interval's whole slot, so it is robust to the labelling convention ([ADR-0001](adr/0001-tou-band-boundary-model.md)).
-⚠ **OPEN**: NEM12 interval-*ending* vs interval-*beginning* labelling — a fact about the file, to be confirmed empirically against the supplied `QB04603893_...` file before parsing. Shifts the whole series by one slot if wrong.
+**Resolved** ([ADR-0016](adr/0016-nem12-interval-labelling.md)): confirmed empirically against the supplied `QB04603893_...` file — `values[0]` is the midnight-starting slot `[00:00, 00:05)`, not an off-by-one from the prior day.
 
 ### Interval Length
 Minutes per **Interval**, declared per-register in the `200` record (5/15/30 in practice). N intervals per day = 1440 ÷ length.
