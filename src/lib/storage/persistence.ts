@@ -5,10 +5,11 @@
  * Key namespaces are kept separate so "clear my usage data" can be surgical:
  *   quokka:usage:<NMI>   - envelope over NmiData
  *   quokka:mapping:<NMI> - envelope over RegisterMapping
- *   quokka:plans         - reserved for the plan library; never touched here
+ *   quokka:plans         - envelope over the whole Plan[] library; clearAllUsage never touches it
  */
 import type { NmiData } from '../nem12';
 import type { RegisterMapping } from '../mapping/types';
+import type { Plan } from '../plan/types';
 
 export const SCHEMA_VERSION = 1;
 
@@ -22,6 +23,7 @@ export type SaveResult = { ok: true } | { ok: false; reason: 'quota' | 'error'; 
 
 const USAGE_PREFIX = 'quokka:usage:';
 const MAPPING_PREFIX = 'quokka:mapping:';
+const PLANS_KEY = 'quokka:plans';
 
 function defaultStorage(): Storage {
   return globalThis.localStorage;
@@ -92,6 +94,16 @@ export function listStoredNmis(storage: Storage = defaultStorage()): string[] {
     if (key?.startsWith(USAGE_PREFIX)) nmis.add(key.slice(USAGE_PREFIX.length));
   }
   return [...nmis];
+}
+
+export function savePlans(plans: Plan[], storage: Storage = defaultStorage()): SaveResult {
+  return save(PLANS_KEY, plans, storage);
+}
+
+// Absent, corrupt, or version-bumped storage resolves to [] (not null) — a plan library is
+// naturally a possibly-empty collection, so callers can iterate without a null check.
+export function loadPlans(storage: Storage = defaultStorage()): Plan[] {
+  return load<Plan[]>(PLANS_KEY, storage) ?? [];
 }
 
 export function clearAllUsage(

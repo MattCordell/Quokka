@@ -7,9 +7,12 @@ import {
   loadMapping,
   listStoredNmis,
   clearAllUsage,
+  savePlans,
+  loadPlans,
 } from './persistence';
 import type { NmiData } from '../nem12';
 import type { RegisterMapping } from '../mapping/types';
+import type { FlatPlan } from '../plan/types';
 
 class MemoryStorage implements Storage {
   private map = new Map<string, string>();
@@ -47,6 +50,20 @@ function mapping(nmi: string): RegisterMapping {
   return { nmi, registers: { E1: 'General' } };
 }
 
+function plan(id: string): FlatPlan {
+  return {
+    id,
+    name: 'Test Plan',
+    retailer: 'Test Co',
+    type: 'flat_rate',
+    supply: { generalCentsPerDay: 100, cl1CentsPerDay: 5, cl2CentsPerDay: 0 },
+    usage: { generalRateCentsPerKwh: 30 },
+    controlledLoad: { cl1RateCentsPerKwh: 20, cl2RateCentsPerKwh: 0 },
+    feedInRateCentsPerKwh: 5,
+    discounts: [],
+  };
+}
+
 describe('persistence', () => {
   let storage: MemoryStorage;
 
@@ -82,13 +99,34 @@ describe('persistence', () => {
   it('clearAllUsage removes usage and mapping but leaves quokka:plans', () => {
     saveUsage(usage('A'), storage);
     saveMapping(mapping('A'), storage);
-    storage.setItem('quokka:plans', '{"kept":true}');
+    savePlans([plan('plan-a')], storage);
 
     clearAllUsage({}, storage);
 
     expect(loadUsage('A', storage)).toBeNull();
     expect(loadMapping('A', storage)).toBeNull();
-    expect(storage.getItem('quokka:plans')).toBe('{"kept":true}');
+    expect(loadPlans(storage)).toEqual([plan('plan-a')]);
+  });
+
+  it('round-trips the plan library as a single list', () => {
+    const plans = [plan('plan-a'), plan('plan-b')];
+    expect(savePlans(plans, storage)).toEqual({ ok: true });
+    expect(loadPlans(storage)).toEqual(plans);
+  });
+
+  it('loadPlans returns [] when nothing is stored', () => {
+    expect(loadPlans(storage)).toEqual([]);
+  });
+
+  it('loadPlans returns [] for corrupt JSON or a bumped schemaVersion', () => {
+    storage.setItem('quokka:plans', '{not json');
+    expect(loadPlans(storage)).toEqual([]);
+
+    storage.setItem(
+      'quokka:plans',
+      JSON.stringify({ schemaVersion: 999, savedAt: 'x', data: [plan('plan-a')] }),
+    );
+    expect(loadPlans(storage)).toEqual([]);
   });
 
   it('clearAllUsage can leave mapping in place when includeMapping is false', () => {
