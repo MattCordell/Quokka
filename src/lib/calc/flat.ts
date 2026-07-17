@@ -1,7 +1,7 @@
 import type { NmiData } from '../nem12';
 import type { RegisterMapping } from '../mapping/types';
 import type { FlatPlan } from '../plan/types';
-import type { Bill, Period } from './types';
+import type { Bill, CategoryUsage, Period } from './types';
 import { daysInPeriod } from './period';
 import { aggregateUsage } from './aggregate';
 
@@ -14,15 +14,18 @@ function finalizeTotal(charges: number[], credit: number): number {
   return Math.round(charges.reduce((a, c) => a + c, 0) - credit);
 }
 
-export function computeFlatBill(
+/**
+ * Prices a flat-rate Plan against an already-aggregated CategoryUsage. `aggregateUsage` doesn't
+ * depend on the plan's rates, so a caller pricing several plans over the same usage/mapping/
+ * period (e.g. Compare's plan list) should aggregate once and call this per plan, rather than
+ * re-aggregating per plan via computeFlatBill.
+ */
+export function priceFlatBill(
   plan: FlatPlan,
-  usage: NmiData,
-  mapping: RegisterMapping,
+  agg: CategoryUsage,
+  days: number,
   period: Period,
 ): Bill {
-  const days = daysInPeriod(period);
-  const agg = aggregateUsage(usage, mapping, period);
-
   // ADR-0002: a CLn charge (supply or usage) counts only if a register is mapped to CLn.
   const cl1Applicable = agg.mappedCategories.CL1;
   const cl2Applicable = agg.mappedCategories.CL2;
@@ -60,4 +63,16 @@ export function computeFlatBill(
     totalCents,
     hasNonActualReads: agg.hasNonActualReads,
   };
+}
+
+/** Convenience one-shot: aggregates usage and prices a single plan in one call. */
+export function computeFlatBill(
+  plan: FlatPlan,
+  usage: NmiData,
+  mapping: RegisterMapping,
+  period: Period,
+): Bill {
+  const days = daysInPeriod(period);
+  const agg = aggregateUsage(usage, mapping, period);
+  return priceFlatBill(plan, agg, days, period);
 }

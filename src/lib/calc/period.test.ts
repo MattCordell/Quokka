@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { compactToIso, dayInPeriod, daysInPeriod, isoToCompact } from './period';
+import { CalcError } from './types';
 
 describe('isoToCompact', () => {
   it('strips dashes', () => {
@@ -51,5 +52,9 @@ describe('daysInPeriod', () => {
   it('is immune to AU DST transitions (no local-timezone Date arithmetic)', () => {
     // AU eastern states end DST on the first Sunday in April; 2025-04-06 is that day.
     expect(daysInPeriod({ start: '2025-04-05', end: '2025-04-07' })).toBe(3);
+  });
+
+  it('throws rather than silently returning a negative day count for a reversed period', () => {
+    expect(() => daysInPeriod({ start: '2025-07-02', end: '2025-07-01' })).toThrow(CalcError);
   });
 });

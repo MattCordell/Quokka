@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { computeFlatBill } from './flat';
+import { computeFlatBill, priceFlatBill } from './flat';
+import { aggregateUsage } from './aggregate';
+import { daysInPeriod } from './period';
 import type { NmiData, Register, RegisterDay } from '../nem12';
 import type { RegisterMapping } from '../mapping/types';
 import type { FlatPlan } from '../plan/types';
@@ -124,5 +126,41 @@ describe('computeFlatBill', () => {
 
     expect(bill.generalUsageCents).toBe(300); // 10 kWh * 30c, no added tax
     expect(bill.totalCents).toBe(300);
+  });
+});
+
+describe('priceFlatBill', () => {
+  it('matches computeFlatBill given the same pre-aggregated usage (no drift between the two paths)', () => {
+    const usage = nmiData([
+      register({ registerId: 'E1', days: [day({ values: [1, 1] })] }),
+      register({ registerId: 'B1', nmiSuffix: 'B1', days: [day({ values: [0.5, 0.5] })] }),
+    ]);
+    const mapping: RegisterMapping = {
+      nmi: '6407000000',
+      registers: { E1: 'General', B1: 'Generation' },
+    };
+    const plan = flatPlan();
+
+    const viaCompute = computeFlatBill(plan, usage, mapping, period);
+    const agg = aggregateUsage(usage, mapping, period);
+    const days = daysInPeriod(period);
+    const viaPrice = priceFlatBill(plan, agg, days, period);
+
+    expect(viaPrice).toEqual(viaCompute);
+  });
+
+  it('prices multiple plans from a single aggregation pass', () => {
+    const usage = nmiData([register({ registerId: 'E1', days: [day({ values: [1, 1] })] })]);
+    const mapping: RegisterMapping = { nmi: '6407000000', registers: { E1: 'General' } };
+    const agg = aggregateUsage(usage, mapping, period);
+    const days = daysInPeriod(period);
+
+    const cheap = flatPlan({ id: 'cheap', usage: { generalRateCentsPerKwh: 10 } });
+    const pricey = flatPlan({ id: 'pricey', usage: { generalRateCentsPerKwh: 50 } });
+
+    const bills = [cheap, pricey].map((plan) => priceFlatBill(plan, agg, days, period));
+
+    expect(bills[0].generalUsageCents).toBe(20); // 2 kWh * 10c
+    expect(bills[1].generalUsageCents).toBe(100); // 2 kWh * 50c
   });
 });

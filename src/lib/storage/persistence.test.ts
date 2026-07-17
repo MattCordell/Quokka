@@ -129,6 +129,20 @@ describe('persistence', () => {
     expect(loadPlans(storage)).toEqual([]);
   });
 
+  it('drops a malformed plan (e.g. a non-numeric rate) instead of surfacing a NaN bill', () => {
+    const malformed = { ...plan('plan-bad'), usage: { generalRateCentsPerKwh: 'oops' } };
+    storage.setItem(
+      'quokka:plans',
+      JSON.stringify({
+        schemaVersion: SCHEMA_VERSION,
+        savedAt: 'x',
+        data: [plan('plan-good'), malformed],
+      }),
+    );
+
+    expect(loadPlans(storage)).toEqual([plan('plan-good')]);
+  });
+
   it('clearAllUsage can leave mapping in place when includeMapping is false', () => {
     saveUsage(usage('A'), storage);
     saveMapping(mapping('A'), storage);

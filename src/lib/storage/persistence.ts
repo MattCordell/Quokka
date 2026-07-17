@@ -9,7 +9,7 @@
  */
 import type { NmiData } from '../nem12';
 import type { RegisterMapping } from '../mapping/types';
-import type { Plan } from '../plan/types';
+import { isValidPlan, type Plan } from '../plan/types';
 
 export const SCHEMA_VERSION = 1;
 
@@ -101,9 +101,12 @@ export function savePlans(plans: Plan[], storage: Storage = defaultStorage()): S
 }
 
 // Absent, corrupt, or version-bumped storage resolves to [] (not null) — a plan library is
-// naturally a possibly-empty collection, so callers can iterate without a null check.
+// naturally a possibly-empty collection, so callers can iterate without a null check. Entries
+// that don't pass isValidPlan (e.g. hand-edited localStorage with a non-numeric rate) are
+// dropped rather than risking a NaN bill.
 export function loadPlans(storage: Storage = defaultStorage()): Plan[] {
-  return load<Plan[]>(PLANS_KEY, storage) ?? [];
+  const plans = load<Plan[]>(PLANS_KEY, storage) ?? [];
+  return Array.isArray(plans) ? plans.filter(isValidPlan) : [];
 }
 
 export function clearAllUsage(

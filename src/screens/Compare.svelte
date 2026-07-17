@@ -1,6 +1,6 @@
 <script lang="ts">
   import { listStoredNmis, loadUsage, loadMapping, loadPlans } from '../lib/storage/persistence';
-  import { computeFlatBill, compactToIso } from '../lib/calc';
+  import { aggregateUsage, daysInPeriod, priceFlatBill, compactToIso } from '../lib/calc';
   import type { FlatPlan } from '../lib/plan/types';
 
   const nmis = listStoredNmis();
@@ -27,27 +27,43 @@
     endOverride = null;
   });
 
+  function clamp(value: string, min: string, max: string): string {
+    if (value < min) return min;
+    if (value > max) return max;
+    return value;
+  }
+
+  // Clamped to the actual data span regardless of what the override holds — the date inputs'
+  // min/max are advisory only (a keyboard-typed out-of-range value still fires onchange), and an
+  // unclamped override would inflate daysInPeriod (and so the supply charge) past what usage
+  // data actually backs.
   let period = $derived.by(() => {
     if (!usage) return null;
+    const min = compactToIso(usage.firstDate);
+    const max = compactToIso(usage.lastDate);
     return {
-      start: startOverride ?? compactToIso(usage.firstDate),
-      end: endOverride ?? compactToIso(usage.lastDate),
+      start: clamp(startOverride ?? min, min, max),
+      end: clamp(endOverride ?? max, min, max),
     };
   });
 
   let periodValid = $derived(!!period && period.start <= period.end);
 
-  let rows = $derived.by(() => {
-    if (!usage || !mapping || !period || !periodValid) return [];
-    const u = usage;
-    const m = mapping;
-    const p = period;
-    return flatPlans.map((plan) => ({ plan, bill: computeFlatBill(plan, u, m, p) }));
+  // aggregateUsage depends only on usage/mapping/period, not on any plan's rates, so it's
+  // hoisted here and priced per plan below rather than re-aggregated inside a per-plan call —
+  // O(data + plans) instead of O(data x plans).
+  let periodAgg = $derived.by(() => {
+    if (!usage || !mapping || !period || !periodValid) return null;
+    return { period, days: daysInPeriod(period), agg: aggregateUsage(usage, mapping, period) };
   });
 
-  // Every Bill already carries this flag (computeFlatBill aggregates once internally) — reuse
-  // it instead of re-running the full register/day/interval aggregation a second time.
-  let hasNonActualReads = $derived(rows.some((row) => row.bill.hasNonActualReads));
+  let rows = $derived.by(() => {
+    if (!periodAgg) return [];
+    const { period: p, days, agg } = periodAgg;
+    return flatPlans.map((plan) => ({ plan, bill: priceFlatBill(plan, agg, days, p) }));
+  });
+
+  let hasNonActualReads = $derived(periodAgg?.agg.hasNonActualReads ?? false);
 
   function formatCents(cents: number): string {
     const dollars = cents / 100;

@@ -1,5 +1,7 @@
 import type { UsageCategory } from '../mapping/types';
 
+export class CalcError extends Error {}
+
 /** ISO YYYY-MM-DD, inclusive of both endpoints (ADR-0005). */
 export interface Period {
   start: string;
