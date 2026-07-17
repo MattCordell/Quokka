@@ -27,8 +27,11 @@ This PRD was hardened in a `grill-with-docs` session. The decisions below are th
 | [0013](docs/adr/0013-tech-stack.md) | Stack: **TypeScript + Vite + Svelte**, static-built for GitHub Pages | §8 |
 | [0014](docs/adr/0014-charting-layerchart.md) | Charting: **LayerChart** (Svelte-native), bundled locally, no CDN | §7.6, §8 |
 | [0015](docs/adr/0015-v1-scope-and-sequencing.md) | Walking skeleton = import→map→flat-plan→total; **legacy CSV & CDR deferred**; calc engine standalone + golden calibration test | §5.4, §6, §9, §11 |
+| [0016](docs/adr/0016-nem12-interval-labelling.md) | NEM12 interval labelling confirmed empirically: `values[0]` is the midnight-starting slot `[00:00, 00:05)` | §5.3 |
 
-**Still open (one item):** NEM12 interval **labelling** (interval-ending vs interval-beginning) is a fact about the data, to be confirmed empirically against the supplied file inside the parser ticket — it shifts the whole series by one slot if assumed wrong.
+**Resolved:** the one previously-open item — NEM12 interval **labelling** (interval-ending vs
+interval-beginning) — is now closed by [ADR-0016](docs/adr/0016-nem12-interval-labelling.md),
+confirmed empirically against the real supplied file.
 
 ---
 

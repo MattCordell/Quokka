@@ -19,9 +19,6 @@ Decisions made while grilling the [PRD](../../electricity-comparison-tool-PRD.md
 | [0013](0013-tech-stack.md) | Tech stack: TypeScript + Vite + Svelte, static-built for Pages | Accepted |
 | [0014](0014-charting-layerchart.md) | Charting: LayerChart (Svelte-native), bundled locally | Accepted |
 | [0015](0015-v1-scope-and-sequencing.md) | V1 walking skeleton + scope; legacy CSV & CDR deferred | Accepted |
+| [0016](0016-nem12-interval-labelling.md) | NEM12 interval labelling confirmed: `values[0]` is the midnight-starting slot | Accepted |
 
 \* ADR-0004 accepted with a noted open tension (calibration accuracy). See the record.
-
-## Still open
-
-- **NEM12 interval labelling** (interval-ending vs interval-beginning) — a fact about the data, to be confirmed empirically against the supplied file inside the parser ticket ([ADR-0015](0015-v1-scope-and-sequencing.md)).
