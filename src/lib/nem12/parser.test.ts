@@ -109,6 +109,13 @@ describe('UOM handling (ADR-0012)', () => {
       expect(() => parseNem12(text)).toThrow(/NMI1\/E1/);
     },
   );
+
+  it.each(['KWH', 'kwh', 'KwH'])('accepts %s as an alias for kWh regardless of case', (uom) => {
+    const text = nem12([`200,NMI1,CFG,E1,E1,,SERIAL,${uom},1440,`, '300,20250101,1,A,,,,']);
+    const parsed = parseNem12(text);
+    expect(parsed.nmis[0].registers[0].totalKwh).toBeCloseTo(1);
+    expect(parsed.nmis[0].registers[0].uom).toBe(uom);
+  });
 });
 
 describe('300 row validation', () => {
@@ -126,6 +133,24 @@ describe('300 row validation', () => {
     ]);
     expect(() => parseNem12(text)).toThrow(Nem12ParseError);
     expect(() => parseNem12(text)).toThrow(/NMI1\/E1: duplicate 300 row for day 20250101/);
+  });
+
+  it('throws when a row has more interval values than the declared interval length', () => {
+    // 3 value fields for a 1-value/day (1440 min) register — the 3rd field lands where the
+    // day flag should be and is numeric, which is the tell that the row is misaligned.
+    const text = nem12(['200,NMI1,CFG,E1,E1,,SERIAL,kWh,1440,', '300,20250101,1,2,3,,,']);
+    expect(() => parseNem12(text)).toThrow(Nem12ParseError);
+    expect(() => parseNem12(text)).toThrow(
+      /NMI1\/E1 day 20250101: expected 1 interval values, found more than 1/,
+    );
+  });
+
+  it('resolves a whole-day quality method with an appended reason code to its leading letter', () => {
+    // A day can be entirely final-substituted without a 400 breakdown, e.g. 'F19' for the
+    // whole day. The resolved per-interval quality must still be the single leading letter.
+    const text = nem12(['200,NMI1,CFG,E1,E1,,SERIAL,kWh,1440,', '300,20250101,1,F19,,,']);
+    const parsed = parseNem12(text);
+    expect(parsed.nmis[0].registers[0].days[0].quality).toEqual(['F']);
   });
 });
 

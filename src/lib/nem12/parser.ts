@@ -2,10 +2,12 @@ import type { NmiData, ParsedNem12, Register, RegisterDay } from './types';
 import { Nem12ParseError } from './types';
 
 // ADR-0012: energy UOMs only; power/demand units (kW, kVA, kVAr, ...) are rejected.
-const ENERGY_UOM_FACTORS: Record<string, number> = { kWh: 1, Wh: 0.001, MWh: 1000 };
+// AEMO MDFF declares UOM codes in uppercase; real exports vary in case, so the lookup is
+// case-insensitive while the register keeps the originally-declared casing for display.
+const ENERGY_UOM_FACTORS: Record<string, number> = { KWH: 1, WH: 0.001, MWH: 1000 };
 
 function uomFactor(uom: string, registerLabel: string): number {
-  const factor = ENERGY_UOM_FACTORS[uom];
+  const factor = ENERGY_UOM_FACTORS[uom.trim().toUpperCase()];
   if (factor === undefined) {
     throw new Nem12ParseError(
       `Register ${registerLabel} declares unsupported UOM '${uom}' — only energy units (kWh, Wh, MWh) are accepted.`,
@@ -98,7 +100,13 @@ export function parseNem12(text: string): ParsedNem12 {
           );
         }
         const factor = uomFactor(currentRegister.uom, label);
-        const dayFlag = fields[2 + n];
+        const dayFlagField = fields[2 + n];
+        const dayFlag = dayFlagField?.[0];
+        if (!dayFlag || /^[0-9.]+$/.test(dayFlagField)) {
+          throw new Nem12ParseError(
+            `Register ${label} day ${date}: expected ${n} interval values, found more than ${n}`,
+          );
+        }
         const values: number[] = new Array(n);
         let dayTotal = 0;
         for (let i = 0; i < n; i++) {
@@ -106,6 +114,10 @@ export function parseNem12(text: string): ParsedNem12 {
           values[i] = v;
           dayTotal += v;
         }
+        // Non-V day flags carry a whole-day quality method (e.g. 'F19'); resolved per-interval
+        // quality is a single char, matching the 400 override path below (ADR-0003).
+        // A V day defaults to actual and is overwritten by 400 ranges below; ADR-0003 mandates
+        // this default explicitly ("default any interval not covered by a 400 range to actual").
         const quality = dayFlag === 'V' ? new Array(n).fill('A') : new Array(n).fill(dayFlag);
 
         currentDay = { date, values, quality };

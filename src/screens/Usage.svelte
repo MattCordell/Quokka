@@ -50,6 +50,10 @@
     <p class="error" role="alert">{error}</p>
   {/if}
 
+  {#if parsed && parsed.nmis.length === 0}
+    <p role="alert">No registers found in this file.</p>
+  {/if}
+
   {#if parsed && parsed.multipleNmis}
     <fieldset>
       <legend
@@ -84,7 +88,7 @@
           <th>Days</th>
           <th>Date range</th>
           <th>Total kWh</th>
-          <th></th>
+          <th><span class="sr-only">Preview</span></th>
         </tr>
       </thead>
       <tbody>
@@ -150,5 +154,17 @@
 
   fieldset {
     margin-top: 1rem;
+  }
+
+  .sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
   }
 </style>
