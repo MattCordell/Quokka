@@ -203,6 +203,21 @@ describe('priceTouBill / computeTouBill', () => {
     expect(() => aggregateGeneralWeek(usage, mapping, period)).toThrow(CalcError);
   });
 
+  it('throws CalcError for an interval length that is <= 30 min but does not divide it evenly', () => {
+    // 20 min is finer than the 30-min grid but doesn't divide it, so a slot boundary at an odd
+    // half-hour (e.g. 06:30) falls inside a 20-min interval rather than on its edge.
+    const usage = nmiData([
+      register({
+        intervalLength: 20,
+        intervalsPerDay: 72,
+        days: [day({ values: new Array(72).fill(1) })],
+      }),
+    ]);
+    const mapping: RegisterMapping = { nmi: '6407000000', registers: { E1: 'General' } };
+
+    expect(() => aggregateGeneralWeek(usage, mapping, period)).toThrow(CalcError);
+  });
+
   it('throws CalcError when a slot has no covering band, rather than understating the bill', () => {
     const usage = nmiData([register()]); // Tuesday, half-hourly
     const mapping: RegisterMapping = { nmi: '6407000000', registers: { E1: 'General' } };

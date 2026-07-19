@@ -8,16 +8,12 @@ import { aggregateUsage } from './aggregate';
 import { finalizeTotal, priceSupplyClSolar, resolveIntervalKwh } from './common';
 
 // Matches the fixed grid Band Coverage is validated against (plan/coverage.ts's default
-// intervalMinutes). A General register coarser than this can have a band boundary fall
-// strictly inside one of its intervals, which aggregateGeneralWeek has no way to split.
-// TODO: the `> MAX_TOU_INTERVAL_MINUTES` guard below is slightly loose — the invariant it's
-// after ("a 30-min-aligned band boundary can never fall inside a single interval") strictly
-// requires the interval length to *divide* the grid, i.e. `30 % intervalLength === 0`. Lengths
-// that are <= 30 but don't divide 30 (16/18/20/24 min — all valid per the parser's
-// `1440 % len === 0` check) still straddle an odd-half-hour boundary and get mis-assigned
-// silently. Unreachable with conformant NEM12 (interval lengths are only 1/5/10/15/30, all of
-// which divide 30), so left as a documented follow-up rather than tightened here.
-const MAX_TOU_INTERVAL_MINUTES = 30;
+// intervalMinutes). A 30-min-aligned band boundary can only ever fall on an interval edge, never
+// strictly inside one, if the interval length itself divides 30 (e.g. 1/5/10/15/30 min — the
+// lengths conformant NEM12 data actually uses). A length that's merely <= 30 but doesn't divide
+// it (16/18/20/24 min, all still valid per the parser's `1440 % len === 0` check) can straddle
+// an odd-half-hour boundary and get mis-assigned, so the guard checks divisibility, not size.
+const TOU_COVERAGE_GRID_MINUTES = 30;
 
 function weekSlotKey(day: TouDay, minute: number): string {
   return `${day}|${minute}`;
@@ -44,11 +40,11 @@ export function aggregateGeneralWeek(
 
   for (const register of usage.registers) {
     if (mapping.registers[register.registerId] !== 'General') continue;
-    if (register.intervalLength > MAX_TOU_INTERVAL_MINUTES) {
+    if (TOU_COVERAGE_GRID_MINUTES % register.intervalLength !== 0) {
       throw new CalcError(
-        `Register ${register.registerId} has a ${register.intervalLength}-min interval; TOU ` +
-          `pricing requires General registers no coarser than ${MAX_TOU_INTERVAL_MINUTES} min, ` +
-          `so a band boundary can never fall inside a single interval.`,
+        `Register ${register.registerId} has a ${register.intervalLength}-min interval, which ` +
+          `does not divide the ${TOU_COVERAGE_GRID_MINUTES}-min TOU coverage grid; a band ` +
+          `boundary could fall inside a single interval instead of on its edge.`,
       );
     }
 
