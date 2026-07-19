@@ -10,7 +10,6 @@
 import type { NmiData } from '../nem12';
 import type { RegisterMapping } from '../mapping/types';
 import { isValidPlan, type Plan } from '../plan/types';
-import { validateBandCoverage } from '../plan/coverage';
 
 export const SCHEMA_VERSION = 1;
 
@@ -104,16 +103,15 @@ export function savePlans(plans: Plan[], storage: Storage = defaultStorage()): S
 // Absent, corrupt, or version-bumped storage resolves to [] (not null) — a plan library is
 // naturally a possibly-empty collection, so callers can iterate without a null check. Entries
 // that don't pass isValidPlan (e.g. hand-edited localStorage with a non-numeric rate) are
-// dropped rather than risking a NaN bill. A TOU plan additionally has its Band Coverage
-// re-checked here (not just at editor save-time): isValidPlan only validates band shape, so
-// this is the one place that guarantees every TOU plan flowing into the calc engine is fully
-// covered, catching data saved before this gate existed or edited outside the app.
+// dropped rather than risking a NaN bill. Deliberately NOT filtered here: a TOU plan whose
+// Band Coverage is invalid (but otherwise shape-valid). Dropping it silently on load would
+// make an authored plan vanish from Plans.svelte with no way to view/edit/delete it, and purge
+// it from storage on the next save — worse than the problem it would solve. Callers that price
+// bills (Compare.svelte) are responsible for excluding and surfacing invalid-coverage TOU plans
+// instead; the calc engine itself refuses to price one (calc/tou.ts throws CalcError).
 export function loadPlans(storage: Storage = defaultStorage()): Plan[] {
   const plans = load<Plan[]>(PLANS_KEY, storage) ?? [];
-  if (!Array.isArray(plans)) return [];
-  return plans
-    .filter(isValidPlan)
-    .filter((plan) => plan.type !== 'time_of_use' || validateBandCoverage(plan.touBands));
+  return Array.isArray(plans) ? plans.filter(isValidPlan) : [];
 }
 
 export function clearAllUsage(

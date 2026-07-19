@@ -2,13 +2,17 @@ import { describe, expect, it } from 'vitest';
 import { computeTouBill, priceTouBill, aggregateGeneralWeek } from './tou';
 import { aggregateUsage } from './aggregate';
 import { daysInPeriod } from './period';
+import { CalcError } from './types';
 import type { NmiData, Register, RegisterDay } from '../nem12';
 import type { RegisterMapping } from '../mapping/types';
 import type { TouBand, TouPlan } from '../plan/types';
 
-// Hourly intervals (24/day) so band boundaries like 16:00/21:00 land exactly on a slot.
+// Half-hourly intervals (48/day, the coarsest TOU pricing accepts) so band boundaries like
+// 16:00/21:00 land exactly on a slot; 0.5 kWh/slot keeps every "1 kWh/hour" expectation below
+// unchanged from a coarser hourly test, since the same clock-time window sums to the same kWh
+// regardless of how finely it's sliced.
 function day(overrides: Partial<RegisterDay> = {}): RegisterDay {
-  const values = overrides.values ?? new Array(24).fill(1);
+  const values = overrides.values ?? new Array(48).fill(0.5);
   return {
     date: '20250701', // Tuesday
     values,
@@ -24,8 +28,8 @@ function register(overrides: Partial<Register> = {}): Register {
     nmiSuffix: 'E1',
     meterSerial: 'METER01',
     uom: 'kWh',
-    intervalLength: 60,
-    intervalsPerDay: 24,
+    intervalLength: 30,
+    intervalsPerDay: 48,
     days: [day({})],
     totalKwh: 0,
     ...overrides,
@@ -83,7 +87,7 @@ const period = { start: '2025-07-01', end: '2025-07-01' };
 
 describe('priceTouBill / computeTouBill', () => {
   it('splits a flat 1 kWh/hour weekday profile across a midnight-wrapping band correctly', () => {
-    const usage = nmiData([register()]); // Tuesday, 24 x 1 kWh
+    const usage = nmiData([register()]); // Tuesday, 24 kWh/day (48 x 0.5 kWh)
     const mapping: RegisterMapping = { nmi: '6407000000', registers: { E1: 'General' } };
     const plan = touPlan([PEAK, OFFPEAK_WEEKDAY]);
 
@@ -130,7 +134,7 @@ describe('priceTouBill / computeTouBill', () => {
     const bill = computeTouBill(plan, usage, mapping, period);
 
     const peak = bill.bands?.find((b) => b.label === 'Peak');
-    expect(peak?.kwh).toBe(10); // 5 hours x 2 registers x 1 kWh
+    expect(peak?.kwh).toBe(10); // 5 kWh x 2 registers
   });
 
   it('priceTouBill matches computeTouBill given the same pre-aggregated inputs', () => {
@@ -148,7 +152,7 @@ describe('priceTouBill / computeTouBill', () => {
   });
 
   it('keeps band cents at full precision and rounds only the total (ADR-0004)', () => {
-    const usage = nmiData([register({ days: [day({ values: new Array(24).fill(0.1) })] })]);
+    const usage = nmiData([register({ days: [day({ values: new Array(48).fill(0.05) })] })]);
     const mapping: RegisterMapping = { nmi: '6407000000', registers: { E1: 'General' } };
     const plan = touPlan([PEAK, OFFPEAK_WEEKDAY], {
       supply: { generalCentsPerDay: 0, cl1CentsPerDay: 0, cl2CentsPerDay: 0 },
@@ -159,17 +163,17 @@ describe('priceTouBill / computeTouBill', () => {
     const bill = computeTouBill(plan, usage, mapping, period);
 
     const peak = bill.bands?.find((b) => b.label === 'Peak');
-    expect(peak?.cents).toBeCloseTo(0.5 * 50, 10); // 0.1 kWh x 5h = 0.5 kWh, unrounded x 50c = 25
+    expect(peak?.cents).toBeCloseTo(0.5 * 50, 10); // 0.05 kWh x 10 slots = 0.5 kWh, unrounded x 50c = 25
     expect(Number.isInteger(bill.totalCents)).toBe(true);
   });
 
   it('allows a negative (net-credit) total, never clamped (ADR-0004)', () => {
     const usage = nmiData([
-      register({ registerId: 'E1', days: [day({ values: new Array(24).fill(0) })] }),
+      register({ registerId: 'E1', days: [day({ values: new Array(48).fill(0) })] }),
       register({
         registerId: 'B1',
         nmiSuffix: 'B1',
-        days: [day({ values: new Array(24).fill(5) })],
+        days: [day({ values: new Array(48).fill(2.5) })],
       }),
     ]);
     const mapping: RegisterMapping = {
@@ -184,5 +188,26 @@ describe('priceTouBill / computeTouBill', () => {
     const bill = computeTouBill(plan, usage, mapping, period);
 
     expect(bill.totalCents).toBeLessThan(0);
+  });
+
+  it('throws CalcError for a General register coarser than the 30-min coverage grid', () => {
+    const usage = nmiData([
+      register({
+        intervalLength: 60,
+        intervalsPerDay: 24,
+        days: [day({ values: new Array(24).fill(1) })],
+      }),
+    ]);
+    const mapping: RegisterMapping = { nmi: '6407000000', registers: { E1: 'General' } };
+
+    expect(() => aggregateGeneralWeek(usage, mapping, period)).toThrow(CalcError);
+  });
+
+  it('throws CalcError when a slot has no covering band, rather than understating the bill', () => {
+    const usage = nmiData([register()]); // Tuesday, half-hourly
+    const mapping: RegisterMapping = { nmi: '6407000000', registers: { E1: 'General' } };
+    const plan = touPlan([PEAK]); // covers only 16:00-21:00 on TUE; the rest of the day is a gap
+
+    expect(() => computeTouBill(plan, usage, mapping, period)).toThrow(CalcError);
   });
 });

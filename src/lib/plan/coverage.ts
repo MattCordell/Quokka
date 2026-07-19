@@ -25,6 +25,12 @@ export function formatTime(minutes: number): string {
  * ADR-0001 editor-UX: a user-friendly *inclusive* end ("20:59", "ends at 9pm") normalises to
  * the *exclusive* grid boundary actually stored ("21:00"). Rounds up to the next grid mark,
  * since an inclusive end of e.g. "20:29" still means the 20:00-20:30 slot is covered.
+ *
+ * Not currently called by Plans.svelte: the band editor deliberately uses exclusive-end
+ * dropdowns instead of free-text inclusive entry (chosen over an inclusive-input UI to avoid a
+ * hidden reinterpretation step in the common case). This transform exists — tested, ready to
+ * call — for the entry points that will need it: a future free-text time field, or importing a
+ * plan expressed with inclusive ends (a legacy export, or a CDR-sourced tariff).
  */
 export function normalizeInclusiveEnd(inclusiveHHMM: string, intervalMinutes = 30): string {
   const inclusiveMinute = parseTime(inclusiveHHMM) + 1;

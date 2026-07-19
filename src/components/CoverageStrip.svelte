@@ -19,11 +19,13 @@
   let height = $derived(rowHeight * grid.length);
 
   // Golden-angle hue spacing gives every band index a distinct color with no fixed palette to
-  // run out of or alias past (a plan can have arbitrarily many bands).
+  // run out of or alias past (a plan can have arbitrarily many bands). Offset so band 0 (the
+  // most common case — a single "All week" band) starts at blue, not red: red is GAP's color,
+  // and a fully-covered plan shouldn't read as the error state.
   function cellFill(value: number): string {
     if (value === GAP) return '#e45756';
     if (value === OVERLAP) return 'url(#coverage-strip-overlap-hatch)';
-    const hue = (value * 137.508) % 360;
+    const hue = (200 + value * 137.508) % 360;
     return `hsl(${hue.toFixed(1)}, 60%, 50%)`;
   }
 

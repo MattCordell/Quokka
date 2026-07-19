@@ -8,6 +8,7 @@
     priceTouBill,
     compactToIso,
   } from '../lib/calc';
+  import { validateBandCoverage } from '../lib/plan/coverage';
   import type { FlatPlan, TouPlan } from '../lib/plan/types';
 
   const nmis = listStoredNmis();
@@ -15,6 +16,11 @@
   const plans = loadPlans();
   const flatPlans = plans.filter((p): p is FlatPlan => p.type === 'flat_rate');
   const touPlans = plans.filter((p): p is TouPlan => p.type === 'time_of_use');
+  // The engine refuses to price a TOU plan whose Band Coverage is invalid (calc/tou.ts throws),
+  // so those are excluded here rather than crashing `rows` below; invalidTouPlans is surfaced
+  // as a visible warning instead of silently vanishing (they still show/edit fine on Plans).
+  const priceableTouPlans = touPlans.filter((p) => validateBandCoverage(p.touBands));
+  const invalidTouPlans = touPlans.filter((p) => !validateBandCoverage(p.touBands));
 
   let usage = $derived(selectedNmi ? loadUsage(selectedNmi) : null);
   let mapping = $derived(selectedNmi ? loadMapping(selectedNmi) : null);
@@ -59,14 +65,15 @@
   // aggregateUsage/aggregateGeneralWeek depend only on usage/mapping/period, not on any plan's
   // rates, so they're hoisted here and priced per plan below rather than re-aggregated inside a
   // per-plan call — O(data + plans) instead of O(data x plans). generalWeek is skipped entirely
-  // when there are no TOU plans to price, since it's otherwise wasted work on every period edit.
+  // when there are no priceable TOU plans, since it's otherwise wasted work on every period edit.
   let periodAgg = $derived.by(() => {
     if (!usage || !mapping || !period || !periodValid) return null;
     return {
       period,
       days: daysInPeriod(period),
       agg: aggregateUsage(usage, mapping, period),
-      generalWeek: touPlans.length > 0 ? aggregateGeneralWeek(usage, mapping, period) : new Map(),
+      generalWeek:
+        priceableTouPlans.length > 0 ? aggregateGeneralWeek(usage, mapping, period) : new Map(),
     };
   });
 
@@ -74,7 +81,7 @@
     if (!periodAgg) return [];
     const { period: p, days, agg, generalWeek } = periodAgg;
     const flatRows = flatPlans.map((plan) => ({ plan, bill: priceFlatBill(plan, agg, days, p) }));
-    const touRows = touPlans.map((plan) => ({
+    const touRows = priceableTouPlans.map((plan) => ({
       plan,
       bill: priceTouBill(plan, agg, generalWeek, days, p),
     }));
@@ -156,6 +163,13 @@
         {:else}
           {#if hasNonActualReads}
             <p role="alert">This period includes estimated or substituted reads.</p>
+          {/if}
+          {#if invalidTouPlans.length > 0}
+            <p role="alert">
+              {invalidTouPlans.length} time-of-use plan{invalidTouPlans.length === 1 ? '' : 's'}
+              {invalidTouPlans.length === 1 ? "isn't" : "aren't"} shown here — Band Coverage is invalid.
+              Fix on the Plans tab: {invalidTouPlans.map((p) => p.name).join(', ')}.
+            </p>
           {/if}
 
           {#each rows as { plan, bill } (plan.id)}

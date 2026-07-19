@@ -188,7 +188,7 @@ describe('persistence', () => {
     expect(loadPlans(storage)).toEqual([touPlan('plan-tou-good')]);
   });
 
-  it('drops a shape-valid TOU plan whose Band Coverage has a gap, re-validating beyond the editor save-time gate', () => {
+  it('keeps a shape-valid TOU plan whose Band Coverage has a gap, rather than silently deleting an authored plan', () => {
     const gappy = {
       ...touPlan('plan-tou-gap'),
       touBands: [{ ...touPlan('x').touBands[0], endTime: '23:30' }], // misses the last 30 min of every day
@@ -202,7 +202,10 @@ describe('persistence', () => {
       }),
     );
 
-    expect(loadPlans(storage)).toEqual([touPlan('plan-tou-good')]);
+    // Band Coverage validity is a pricing/UI-layer concern (Compare.svelte), not a load-time
+    // gate: this plan must still be loadable so it can be viewed, edited, and fixed rather than
+    // vanishing from the app and being purged from storage on the next save.
+    expect(loadPlans(storage)).toEqual([touPlan('plan-tou-good'), gappy]);
   });
 
   it('clearAllUsage can leave mapping in place when includeMapping is false', () => {

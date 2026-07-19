@@ -1,11 +1,16 @@
 import type { NmiData } from '../nem12';
 import type { RegisterMapping } from '../mapping/types';
 import type { TouPlan, TouDay } from '../plan/types';
-import { parseTime, slotInBand } from '../plan/coverage';
-import type { Bill, BandCharge, CategoryUsage, Period } from './types';
+import { formatTime, parseTime, slotInBand } from '../plan/coverage';
+import { CalcError, type Bill, type BandCharge, type CategoryUsage, type Period } from './types';
 import { daysInPeriod, dayInPeriod, dayOfWeek } from './period';
 import { aggregateUsage } from './aggregate';
 import { finalizeTotal, priceSupplyClSolar, resolveIntervalKwh } from './common';
+
+// Matches the fixed grid Band Coverage is validated against (plan/coverage.ts's default
+// intervalMinutes). A General register coarser than this can have a band boundary fall
+// strictly inside one of its intervals, which aggregateGeneralWeek has no way to split.
+const MAX_TOU_INTERVAL_MINUTES = 30;
 
 function weekSlotKey(day: TouDay, minute: number): string {
   return `${day}|${minute}`;
@@ -32,6 +37,13 @@ export function aggregateGeneralWeek(
 
   for (const register of usage.registers) {
     if (mapping.registers[register.registerId] !== 'General') continue;
+    if (register.intervalLength > MAX_TOU_INTERVAL_MINUTES) {
+      throw new CalcError(
+        `Register ${register.registerId} has a ${register.intervalLength}-min interval; TOU ` +
+          `pricing requires General registers no coarser than ${MAX_TOU_INTERVAL_MINUTES} min, ` +
+          `so a band boundary can never fall inside a single interval.`,
+      );
+    }
 
     for (const day of register.days) {
       if (!dayInPeriod(day.date, period)) continue;
@@ -76,11 +88,18 @@ export function priceTouBill(
       (band, i) =>
         band.days.includes(day) && slotInBand(minute, bandTimes[i].start, bandTimes[i].end),
     );
-    // Coverage is validated at the editor's save gate and re-checked on every storage load
-    // (persistence.ts's loadPlans), so this should be unreachable in practice; left as a
-    // defense-in-depth skip rather than a throw, so an in-memory plan object bypassing both
-    // gates still renders a partial bill instead of crashing the Compare screen.
-    if (bandIndex !== -1) bandKwh[bandIndex] += kwh;
+    // The engine enforces its own contract rather than trusting a caller's UI gate (mirrors
+    // daysInPeriod throwing CalcError on a reversed period, calc/period.ts): silently under-
+    // counting kWh here would understate the bill with no signal, which is worse for a money
+    // tool than refusing to price. Callers (e.g. Compare.svelte) are responsible for excluding
+    // a plan whose Band Coverage is invalid before calling this, and showing that separately.
+    if (bandIndex === -1) {
+      throw new CalcError(
+        `No TOU band covers ${day} ${formatTime(minute)} for plan '${plan.name}' — its Band ` +
+          `Coverage should be validated before pricing.`,
+      );
+    }
+    bandKwh[bandIndex] += kwh;
   }
 
   const bands: BandCharge[] = plan.touBands.map((band, i) => ({
