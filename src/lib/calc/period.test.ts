@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { compactToIso, dayInPeriod, daysInPeriod, isoToCompact } from './period';
+import { compactToIso, dayInPeriod, dayOfWeek, daysInPeriod, isoToCompact } from './period';
 import { CalcError } from './types';
 
 describe('isoToCompact', () => {
@@ -56,5 +56,24 @@ describe('daysInPeriod', () => {
 
   it('throws rather than silently returning a negative day count for a reversed period', () => {
     expect(() => daysInPeriod({ start: '2025-07-02', end: '2025-07-01' })).toThrow(CalcError);
+  });
+});
+
+describe('dayOfWeek', () => {
+  it('resolves the golden fixture dates to the documented weekdays (Tue, Wed)', () => {
+    expect(dayOfWeek('20250701')).toBe('TUE');
+    expect(dayOfWeek('20250702')).toBe('WED');
+  });
+
+  it('maps a Sunday correctly (the getUTCDay 0 -> TOU_DAYS wraparound case)', () => {
+    expect(dayOfWeek('20250706')).toBe('SUN');
+  });
+
+  it('maps a Monday correctly', () => {
+    expect(dayOfWeek('20250707')).toBe('MON');
+  });
+
+  it('is immune to local-timezone/DST drift (UTC parsing, mirroring daysInPeriod)', () => {
+    expect(dayOfWeek('20250405')).toBe('SAT');
   });
 });

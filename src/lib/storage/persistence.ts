@@ -10,6 +10,7 @@
 import type { NmiData } from '../nem12';
 import type { RegisterMapping } from '../mapping/types';
 import { isValidPlan, type Plan } from '../plan/types';
+import { validateBandCoverage } from '../plan/coverage';
 
 export const SCHEMA_VERSION = 1;
 
@@ -103,10 +104,16 @@ export function savePlans(plans: Plan[], storage: Storage = defaultStorage()): S
 // Absent, corrupt, or version-bumped storage resolves to [] (not null) — a plan library is
 // naturally a possibly-empty collection, so callers can iterate without a null check. Entries
 // that don't pass isValidPlan (e.g. hand-edited localStorage with a non-numeric rate) are
-// dropped rather than risking a NaN bill.
+// dropped rather than risking a NaN bill. A TOU plan additionally has its Band Coverage
+// re-checked here (not just at editor save-time): isValidPlan only validates band shape, so
+// this is the one place that guarantees every TOU plan flowing into the calc engine is fully
+// covered, catching data saved before this gate existed or edited outside the app.
 export function loadPlans(storage: Storage = defaultStorage()): Plan[] {
   const plans = load<Plan[]>(PLANS_KEY, storage) ?? [];
-  return Array.isArray(plans) ? plans.filter(isValidPlan) : [];
+  if (!Array.isArray(plans)) return [];
+  return plans
+    .filter(isValidPlan)
+    .filter((plan) => plan.type !== 'time_of_use' || validateBandCoverage(plan.touBands));
 }
 
 export function clearAllUsage(

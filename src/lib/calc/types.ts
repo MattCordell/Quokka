@@ -17,11 +17,20 @@ export interface CategoryUsage {
   hasNonActualReads: boolean;
 }
 
+/** One TOU band's contribution to generalUsageCents. Full precision (ADR-0004). */
+export interface BandCharge {
+  label: string;
+  kwh: number;
+  rateCentsPerKwh: number;
+  cents: number;
+}
+
 /**
- * The computed result for one flat-rate Plan over one Period. Every field except
- * `totalCents` is full precision (ADR-0004) — `totalCents` is the only rounded value.
- * `cl1Applicable`/`cl2Applicable` distinguish "not applicable" (no mapped register,
- * ADR-0002) from a genuine $0 charge.
+ * The computed result for one Plan over one Period. Every field except `totalCents` is full
+ * precision (ADR-0004) — `totalCents` is the only rounded value. `cl1Applicable`/
+ * `cl2Applicable` distinguish "not applicable" (no mapped register, ADR-0002) from a genuine
+ * $0 charge. `bands` is present only for a TOU bill (undefined for flat-rate); when present,
+ * `generalUsageCents` equals the sum of every band's `cents`.
  */
 export interface Bill {
   planId: string;
@@ -30,6 +39,7 @@ export interface Bill {
 
   supplyCents: number;
   generalUsageCents: number;
+  bands?: BandCharge[];
   cl1Applicable: boolean;
   cl1Cents: number;
   cl2Applicable: boolean;
