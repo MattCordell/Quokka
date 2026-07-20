@@ -1,53 +1,36 @@
 <script lang="ts">
   import { loadPlans } from '../lib/storage/persistence';
-  import { computeCalibration } from '../lib/calc';
-  import type { CalibrationResult, ManualBillInput } from '../lib/calc';
+  import { computeCalibration, CalcError } from '../lib/calc';
+  import type { ManualBillInput } from '../lib/calc';
   import type { FlatPlan } from '../lib/plan/types';
   import { formatCents } from '../lib/format';
-
-  interface FormState {
-    planId: string;
-    periodStart: string;
-    periodEnd: string;
-    generalKwh: number;
-    cl1Kwh: number | null;
-    cl2Kwh: number | null;
-    feedInKwh: number;
-    actualDollars: number;
-  }
+  import { calibrationState } from './calibrationState.svelte';
 
   const flatPlans = loadPlans().filter((p): p is FlatPlan => p.type === 'flat_rate');
 
-  function emptyForm(): FormState {
-    return {
-      planId: flatPlans[0]?.id ?? '',
-      periodStart: '',
-      periodEnd: '',
-      generalKwh: 0,
-      cl1Kwh: null,
-      cl2Kwh: null,
-      feedInKwh: 0,
-      actualDollars: 0,
-    };
-  }
+  // Defaults the plan picker to the first flat plan the first time this screen is visited,
+  // without overwriting a plan the user already picked on an earlier visit (calibrationState
+  // persists across tab switches).
+  $effect(() => {
+    if (!calibrationState.form.planId && flatPlans.length > 0) {
+      calibrationState.form.planId = flatPlans[0].id;
+    }
+  });
 
-  let form = $state<FormState>(emptyForm());
-  let error = $state<string | null>(null);
-  let result = $state<CalibrationResult | null>(null);
-
-  let selectedPlan = $derived(flatPlans.find((p) => p.id === form.planId) ?? null);
+  let selectedPlan = $derived(flatPlans.find((p) => p.id === calibrationState.form.planId) ?? null);
 
   function submitForm(event: SubmitEvent) {
     event.preventDefault();
-    error = null;
-    result = null;
+    const form = calibrationState.form;
+    calibrationState.error = null;
+    calibrationState.result = null;
 
     if (!selectedPlan) {
-      error = 'Select a flat-rate plan first.';
+      calibrationState.error = 'Select a flat-rate plan first.';
       return;
     }
-    if (form.periodStart > form.periodEnd) {
-      error = 'The period start must not be after the period end.';
+    if (form.generalKwh === null || form.feedInKwh === null || form.actualDollars === null) {
+      calibrationState.error = 'Fill in every required field.';
       return;
     }
 
@@ -60,7 +43,12 @@
       actualCents: Math.round(form.actualDollars * 100),
     };
 
-    result = computeCalibration(selectedPlan, input);
+    try {
+      calibrationState.result = computeCalibration(selectedPlan, input);
+    } catch (e) {
+      calibrationState.error =
+        e instanceof CalcError ? e.message : `Unexpected error: ${String(e)}`;
+    }
   }
 </script>
 
@@ -77,7 +65,7 @@
     <form onsubmit={submitForm}>
       <label>
         Plan
-        <select bind:value={form.planId} required>
+        <select bind:value={calibrationState.form.planId} required>
           {#each flatPlans as plan (plan.id)}
             <option value={plan.id}>{plan.name} ({plan.retailer})</option>
           {/each}
@@ -87,17 +75,23 @@
       <div class="period">
         <label>
           Period start
-          <input type="date" bind:value={form.periodStart} required />
+          <input type="date" bind:value={calibrationState.form.periodStart} required />
         </label>
         <label>
           Period end
-          <input type="date" bind:value={form.periodEnd} required />
+          <input type="date" bind:value={calibrationState.form.periodEnd} required />
         </label>
       </div>
 
       <label>
         General usage (kWh)
-        <input type="number" min="0" step="any" bind:value={form.generalKwh} required />
+        <input
+          type="number"
+          min="0"
+          step="any"
+          bind:value={calibrationState.form.generalKwh}
+          required
+        />
       </label>
       <label>
         Controlled Load 1 (kWh)
@@ -105,7 +99,7 @@
           type="number"
           min="0"
           step="any"
-          bind:value={form.cl1Kwh}
+          bind:value={calibrationState.form.cl1Kwh}
           placeholder="not applicable"
         />
       </label>
@@ -115,27 +109,40 @@
           type="number"
           min="0"
           step="any"
-          bind:value={form.cl2Kwh}
+          bind:value={calibrationState.form.cl2Kwh}
           placeholder="not applicable"
         />
       </label>
       <label>
         Solar feed-in (kWh)
-        <input type="number" min="0" step="any" bind:value={form.feedInKwh} required />
+        <input
+          type="number"
+          min="0"
+          step="any"
+          bind:value={calibrationState.form.feedInKwh}
+          required
+        />
       </label>
       <label>
         Actual bill total ($)
-        <input type="number" min="0" step="0.01" bind:value={form.actualDollars} required />
+        <input
+          type="number"
+          min="0"
+          step="0.01"
+          bind:value={calibrationState.form.actualDollars}
+          required
+        />
       </label>
 
       <button type="submit">Check calibration</button>
     </form>
 
-    {#if error}
-      <p class="error" role="alert">{error}</p>
+    {#if calibrationState.error}
+      <p class="error" role="alert">{calibrationState.error}</p>
     {/if}
 
-    {#if result}
+    {#if calibrationState.result}
+      {@const result = calibrationState.result}
       <article class="result">
         <h3>Calculated vs actual</h3>
         <dl class="summary">
