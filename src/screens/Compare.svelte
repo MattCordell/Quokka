@@ -1,13 +1,26 @@
 <script lang="ts">
   import { listStoredNmis, loadUsage, loadMapping, loadPlans } from '../lib/storage/persistence';
-  import { aggregateUsage, daysInPeriod, priceFlatBill, compactToIso } from '../lib/calc';
-  import type { FlatPlan } from '../lib/plan/types';
+  import {
+    aggregateUsage,
+    aggregateGeneralWeek,
+    daysInPeriod,
+    priceFlatBill,
+    priceTouBill,
+    compactToIso,
+  } from '../lib/calc';
+  import { validateBandCoverage } from '../lib/plan/coverage';
+  import type { FlatPlan, TouPlan } from '../lib/plan/types';
 
   const nmis = listStoredNmis();
   let selectedNmi = $state<string | null>(nmis.length === 1 ? nmis[0] : null);
   const plans = loadPlans();
   const flatPlans = plans.filter((p): p is FlatPlan => p.type === 'flat_rate');
-  const touPlanCount = plans.length - flatPlans.length;
+  const touPlans = plans.filter((p): p is TouPlan => p.type === 'time_of_use');
+  // The engine refuses to price a TOU plan whose Band Coverage is invalid (calc/tou.ts throws),
+  // so those are excluded here rather than crashing `rows` below; invalidTouPlans is surfaced
+  // as a visible warning instead of silently vanishing (they still show/edit fine on Plans).
+  const priceableTouPlans = touPlans.filter((p) => validateBandCoverage(p.touBands));
+  const invalidTouPlans = touPlans.filter((p) => !validateBandCoverage(p.touBands));
 
   let usage = $derived(selectedNmi ? loadUsage(selectedNmi) : null);
   let mapping = $derived(selectedNmi ? loadMapping(selectedNmi) : null);
@@ -49,18 +62,30 @@
 
   let periodValid = $derived(!!period && period.start <= period.end);
 
-  // aggregateUsage depends only on usage/mapping/period, not on any plan's rates, so it's
-  // hoisted here and priced per plan below rather than re-aggregated inside a per-plan call —
-  // O(data + plans) instead of O(data x plans).
+  // aggregateUsage/aggregateGeneralWeek depend only on usage/mapping/period, not on any plan's
+  // rates, so they're hoisted here and priced per plan below rather than re-aggregated inside a
+  // per-plan call — O(data + plans) instead of O(data x plans). generalWeek is skipped entirely
+  // when there are no priceable TOU plans, since it's otherwise wasted work on every period edit.
   let periodAgg = $derived.by(() => {
     if (!usage || !mapping || !period || !periodValid) return null;
-    return { period, days: daysInPeriod(period), agg: aggregateUsage(usage, mapping, period) };
+    return {
+      period,
+      days: daysInPeriod(period),
+      agg: aggregateUsage(usage, mapping, period),
+      generalWeek:
+        priceableTouPlans.length > 0 ? aggregateGeneralWeek(usage, mapping, period) : new Map(),
+    };
   });
 
   let rows = $derived.by(() => {
     if (!periodAgg) return [];
-    const { period: p, days, agg } = periodAgg;
-    return flatPlans.map((plan) => ({ plan, bill: priceFlatBill(plan, agg, days, p) }));
+    const { period: p, days, agg, generalWeek } = periodAgg;
+    const flatRows = flatPlans.map((plan) => ({ plan, bill: priceFlatBill(plan, agg, days, p) }));
+    const touRows = priceableTouPlans.map((plan) => ({
+      plan,
+      bill: priceTouBill(plan, agg, generalWeek, days, p),
+    }));
+    return [...flatRows, ...touRows];
   });
 
   let hasNonActualReads = $derived(periodAgg?.agg.hasNonActualReads ?? false);
@@ -104,12 +129,8 @@
         <p role="alert">
           Complete the Register Mapping for {selectedNmi} on the Usage data tab first.
         </p>
-      {:else if flatPlans.length === 0}
-        <p role="alert">
-          {plans.length === 0
-            ? 'Create a plan on the Plans tab first.'
-            : 'No flat-rate plans to compare (time-of-use billing is not supported yet).'}
-        </p>
+      {:else if flatPlans.length === 0 && touPlans.length === 0}
+        <p role="alert">Create a plan on the Plans tab first.</p>
       {:else if period}
         <!-- `|| null` (not just the raw value): clearing a date input via backspace fires
              onchange with '', which would otherwise bypass the ?? default above and feed an
@@ -143,10 +164,11 @@
           {#if hasNonActualReads}
             <p role="alert">This period includes estimated or substituted reads.</p>
           {/if}
-          {#if touPlanCount > 0}
-            <p>
-              {touPlanCount} time-of-use plan{touPlanCount === 1 ? '' : 's'} not shown — TOU billing isn't
-              supported yet.
+          {#if invalidTouPlans.length > 0}
+            <p role="alert">
+              {invalidTouPlans.length} time-of-use plan{invalidTouPlans.length === 1 ? '' : 's'}
+              {invalidTouPlans.length === 1 ? "isn't" : "aren't"} shown here — Band Coverage is invalid.
+              Fix on the Plans tab: {invalidTouPlans.map((p) => p.name).join(', ')}.
             </p>
           {/if}
 
@@ -156,8 +178,15 @@
               <dl>
                 <dt>Supply</dt>
                 <dd>{formatCents(bill.supplyCents)}</dd>
-                <dt>General usage</dt>
-                <dd>{formatCents(bill.generalUsageCents)}</dd>
+                {#if bill.bands}
+                  {#each bill.bands as band, i (i)}
+                    <dt>{band.label}</dt>
+                    <dd>{formatCents(band.cents)}</dd>
+                  {/each}
+                {:else}
+                  <dt>General usage</dt>
+                  <dd>{formatCents(bill.generalUsageCents)}</dd>
+                {/if}
                 <dt>CL1</dt>
                 <dd>{bill.cl1Applicable ? formatCents(bill.cl1Cents) : 'not applicable'}</dd>
                 <dt>CL2</dt>

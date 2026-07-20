@@ -98,7 +98,28 @@ export function isValidPlan(value: unknown): value is Plan {
     return isRecord(usage) && isFiniteNumber(usage.generalRateCentsPerKwh);
   }
   if (value.type === 'time_of_use') {
-    return Array.isArray(value.touBands);
+    return (
+      Array.isArray(value.touBands) &&
+      value.touBands.length > 0 &&
+      value.touBands.every(isValidTouBand)
+    );
   }
   return false;
+}
+
+// "HH:MM" on 00:00-23:59. startTime never accepts the "24:00" sentinel — that value only
+// means "end of day" (ADR-0001), and end-only exempts a start='00:00' band from ever legally
+// starting at the same instant it ends.
+const TIME_PATTERN = /^([01]\d|2[0-3]):[0-5]\d$/;
+// endTime additionally accepts "24:00", the end-of-day exclusive sentinel (ADR-0001).
+const END_TIME_PATTERN = /^([01]\d|2[0-3]):[0-5]\d$|^24:00$/;
+
+function isValidTouBand(value: unknown): value is TouBand {
+  if (!isRecord(value)) return false;
+  if (typeof value.label !== 'string') return false;
+  if (typeof value.startTime !== 'string' || !TIME_PATTERN.test(value.startTime)) return false;
+  if (typeof value.endTime !== 'string' || !END_TIME_PATTERN.test(value.endTime)) return false;
+  if (!isFiniteNumber(value.rateCentsPerKwh)) return false;
+  if (!Array.isArray(value.days) || value.days.length === 0) return false;
+  return value.days.every((day) => (TOU_DAYS as readonly string[]).includes(day));
 }

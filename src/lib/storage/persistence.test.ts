@@ -12,7 +12,7 @@ import {
 } from './persistence';
 import type { NmiData } from '../nem12';
 import type { RegisterMapping } from '../mapping/types';
-import type { FlatPlan } from '../plan/types';
+import type { FlatPlan, TouPlan } from '../plan/types';
 
 class MemoryStorage implements Storage {
   private map = new Map<string, string>();
@@ -58,6 +58,28 @@ function plan(id: string): FlatPlan {
     type: 'flat_rate',
     supply: { generalCentsPerDay: 100, cl1CentsPerDay: 5, cl2CentsPerDay: 0 },
     usage: { generalRateCentsPerKwh: 30 },
+    controlledLoad: { cl1RateCentsPerKwh: 20, cl2RateCentsPerKwh: 0 },
+    feedInRateCentsPerKwh: 5,
+    discounts: [],
+  };
+}
+
+function touPlan(id: string): TouPlan {
+  return {
+    id,
+    name: 'Test TOU Plan',
+    retailer: 'Test Co',
+    type: 'time_of_use',
+    supply: { generalCentsPerDay: 110, cl1CentsPerDay: 5, cl2CentsPerDay: 0 },
+    touBands: [
+      {
+        label: 'All week',
+        startTime: '00:00',
+        endTime: '24:00',
+        rateCentsPerKwh: 25,
+        days: ['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN'],
+      },
+    ],
     controlledLoad: { cl1RateCentsPerKwh: 20, cl2RateCentsPerKwh: 0 },
     feedInRateCentsPerKwh: 5,
     discounts: [],
@@ -141,6 +163,49 @@ describe('persistence', () => {
     );
 
     expect(loadPlans(storage)).toEqual([plan('plan-good')]);
+  });
+
+  it('round-trips a TOU plan alongside a flat plan in the same library', () => {
+    const plans = [plan('plan-a'), touPlan('plan-tou')];
+    expect(savePlans(plans, storage)).toEqual({ ok: true });
+    expect(loadPlans(storage)).toEqual(plans);
+  });
+
+  it('drops a TOU plan with a shape-malformed band instead of surfacing a NaN bill', () => {
+    const malformed = {
+      ...touPlan('plan-tou-bad'),
+      touBands: [{ ...touPlan('x').touBands[0], rateCentsPerKwh: 'oops' }],
+    };
+    storage.setItem(
+      'quokka:plans',
+      JSON.stringify({
+        schemaVersion: SCHEMA_VERSION,
+        savedAt: 'x',
+        data: [touPlan('plan-tou-good'), malformed],
+      }),
+    );
+
+    expect(loadPlans(storage)).toEqual([touPlan('plan-tou-good')]);
+  });
+
+  it('keeps a shape-valid TOU plan whose Band Coverage has a gap, rather than silently deleting an authored plan', () => {
+    const gappy = {
+      ...touPlan('plan-tou-gap'),
+      touBands: [{ ...touPlan('x').touBands[0], endTime: '23:30' }], // misses the last 30 min of every day
+    };
+    storage.setItem(
+      'quokka:plans',
+      JSON.stringify({
+        schemaVersion: SCHEMA_VERSION,
+        savedAt: 'x',
+        data: [touPlan('plan-tou-good'), gappy],
+      }),
+    );
+
+    // Band Coverage validity is a pricing/UI-layer concern (Compare.svelte), not a load-time
+    // gate: this plan must still be loadable so it can be viewed, edited, and fixed rather than
+    // vanishing from the app and being purged from storage on the next save.
+    expect(loadPlans(storage)).toEqual([touPlan('plan-tou-good'), gappy]);
   });
 
   it('clearAllUsage can leave mapping in place when includeMapping is false', () => {

@@ -2,6 +2,7 @@ import type { NmiData } from '../nem12';
 import { USAGE_CATEGORIES, type RegisterMapping, type UsageCategory } from '../mapping/types';
 import type { CategoryUsage, Period } from './types';
 import { dayInPeriod } from './period';
+import { resolveIntervalKwh } from './common';
 
 function emptyRecord<T>(value: T): Record<UsageCategory, T> {
   return Object.fromEntries(USAGE_CATEGORIES.map((category) => [category, value])) as Record<
@@ -38,7 +39,7 @@ export function aggregateUsage(
       for (let i = 0; i < day.values.length; i++) {
         const quality = day.quality[i];
         if (quality !== 'A') hasNonActualReads = true;
-        kwhByCategory[category] += quality === 'N' ? 0 : day.values[i];
+        kwhByCategory[category] += resolveIntervalKwh(quality, day.values[i]);
       }
     }
   }

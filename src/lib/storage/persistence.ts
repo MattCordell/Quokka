@@ -103,7 +103,12 @@ export function savePlans(plans: Plan[], storage: Storage = defaultStorage()): S
 // Absent, corrupt, or version-bumped storage resolves to [] (not null) — a plan library is
 // naturally a possibly-empty collection, so callers can iterate without a null check. Entries
 // that don't pass isValidPlan (e.g. hand-edited localStorage with a non-numeric rate) are
-// dropped rather than risking a NaN bill.
+// dropped rather than risking a NaN bill. Deliberately NOT filtered here: a TOU plan whose
+// Band Coverage is invalid (but otherwise shape-valid). Dropping it silently on load would
+// make an authored plan vanish from Plans.svelte with no way to view/edit/delete it, and purge
+// it from storage on the next save — worse than the problem it would solve. Callers that price
+// bills (Compare.svelte) are responsible for excluding and surfacing invalid-coverage TOU plans
+// instead; the calc engine itself refuses to price one (calc/tou.ts throws CalcError).
 export function loadPlans(storage: Storage = defaultStorage()): Plan[] {
   const plans = load<Plan[]>(PLANS_KEY, storage) ?? [];
   return Array.isArray(plans) ? plans.filter(isValidPlan) : [];
