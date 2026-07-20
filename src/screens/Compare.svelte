@@ -10,6 +10,7 @@
   } from '../lib/calc';
   import { validateBandCoverage } from '../lib/plan/coverage';
   import type { FlatPlan, TouPlan } from '../lib/plan/types';
+  import { formatCents } from '../lib/format';
 
   const nmis = listStoredNmis();
   let selectedNmi = $state<string | null>(nmis.length === 1 ? nmis[0] : null);
@@ -89,12 +90,6 @@
   });
 
   let hasNonActualReads = $derived(periodAgg?.agg.hasNonActualReads ?? false);
-
-  function formatCents(cents: number): string {
-    const dollars = cents / 100;
-    const sign = dollars < 0 ? '-' : '';
-    return `${sign}$${Math.abs(dollars).toFixed(2)}`;
-  }
 </script>
 
 <section>
