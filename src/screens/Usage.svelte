@@ -8,6 +8,9 @@
   import { saveUsage, loadMapping, saveMapping, clearAllUsage } from '../lib/storage/persistence';
   import { averageDayShape } from '../lib/usage/shape';
   import Sparkline from '../components/Sparkline.svelte';
+  import Calibration from './Calibration.svelte';
+
+  let mode = $state<'import' | 'manual'>('import');
 
   let error = $state<string | null>(null);
   let parsed = $state<ParsedNem12 | null>(null);
@@ -100,150 +103,184 @@
 
 <section>
   <h2>Usage data</h2>
-  <p>Upload a NEM12 interval-data export (.csv) to inspect its registers.</p>
 
-  <label>
-    NEM12 file
-    <input type="file" accept=".csv,text/csv" onchange={onFileChange} />
-  </label>
+  <div class="subtabs">
+    <button
+      type="button"
+      aria-current={mode === 'import' ? 'true' : undefined}
+      onclick={() => (mode = 'import')}
+    >
+      Import interval data
+    </button>
+    <button
+      type="button"
+      aria-current={mode === 'manual' ? 'true' : undefined}
+      onclick={() => (mode = 'manual')}
+    >
+      Enter single bill
+    </button>
+  </div>
 
-  {#if error}
-    <p class="error" role="alert">{error}</p>
-  {/if}
+  {#if mode === 'manual'}
+    <Calibration />
+  {:else}
+    <p>Upload a NEM12 interval-data export (.csv) to inspect its registers.</p>
 
-  {#if usageSaveWarning}
-    <p class="error" role="alert">Could not save usage on this device: {usageSaveWarning}</p>
-  {/if}
+    <label>
+      NEM12 file
+      <input type="file" accept=".csv,text/csv" onchange={onFileChange} />
+    </label>
 
-  {#if mappingSaveWarning}
-    <p class="error" role="alert">
-      Could not save Register Mapping on this device: {mappingSaveWarning}
-    </p>
-  {/if}
+    {#if error}
+      <p class="error" role="alert">{error}</p>
+    {/if}
 
-  {#if parsed && parsed.nmis.length === 0}
-    <p role="alert">No registers found in this file.</p>
-  {/if}
+    {#if usageSaveWarning}
+      <p class="error" role="alert">Could not save usage on this device: {usageSaveWarning}</p>
+    {/if}
 
-  {#if parsed && parsed.multipleNmis}
-    <fieldset>
-      <legend
-        >This file contains multiple NMIs — pick one to inspect (never merged, ADR-0010)</legend
-      >
-      {#each parsed.nmis as nmi (nmi.nmi)}
-        <label>
-          <input
-            type="radio"
-            name="nmi"
-            value={nmi.nmi}
-            checked={selectedNmi === nmi.nmi}
-            onchange={() => (selectedNmi = nmi.nmi)}
-          />
-          {nmi.nmi} ({nmi.registers.length} register{nmi.registers.length === 1 ? '' : 's'})
-        </label>
-      {/each}
-    </fieldset>
-  {/if}
+    {#if mappingSaveWarning}
+      <p class="error" role="alert">
+        Could not save Register Mapping on this device: {mappingSaveWarning}
+      </p>
+    {/if}
 
-  {#if selected}
-    <h3>NMI {selected.nmi}</h3>
-    <p>{selected.firstDate} &ndash; {selected.lastDate} ({selected.dayCount} days)</p>
+    {#if parsed && parsed.nmis.length === 0}
+      <p role="alert">No registers found in this file.</p>
+    {/if}
 
-    <table>
-      <thead>
-        <tr>
-          <th>Register</th>
-          <th>Meter serial</th>
-          <th>UOM</th>
-          <th>Interval length</th>
-          <th>Days</th>
-          <th>Date range</th>
-          <th>Total kWh</th>
-          <th>Shape</th>
-          <th>Usage category</th>
-          <th><span class="sr-only">Preview</span></th>
-        </tr>
-      </thead>
-      <tbody>
-        {#each selected.registers as register (`${register.registerId}/${register.nmiSuffix}`)}
-          {@const key = `${selected.nmi}/${register.registerId}/${register.nmiSuffix}`}
-          {@const firstDay = register.days[0]}
-          {@const lastDay = register.days[register.days.length - 1]}
-          {@const shape = averageDayShape(register)}
+    {#if parsed && parsed.multipleNmis}
+      <fieldset>
+        <legend
+          >This file contains multiple NMIs — pick one to inspect (never merged, ADR-0010)</legend
+        >
+        {#each parsed.nmis as nmi (nmi.nmi)}
+          <label>
+            <input
+              type="radio"
+              name="nmi"
+              value={nmi.nmi}
+              checked={selectedNmi === nmi.nmi}
+              onchange={() => (selectedNmi = nmi.nmi)}
+            />
+            {nmi.nmi} ({nmi.registers.length} register{nmi.registers.length === 1 ? '' : 's'})
+          </label>
+        {/each}
+      </fieldset>
+    {/if}
+
+    {#if selected}
+      <h3>NMI {selected.nmi}</h3>
+      <p>{selected.firstDate} &ndash; {selected.lastDate} ({selected.dayCount} days)</p>
+
+      <table>
+        <thead>
           <tr>
-            <td>{register.registerId}</td>
-            <td>{register.meterSerial}</td>
-            <td>{register.uom}</td>
-            <td>{register.intervalLength} min</td>
-            <td>{register.days.length}</td>
-            <td>{firstDay?.date} &ndash; {lastDay?.date}</td>
-            <td>{register.totalKwh.toFixed(2)}</td>
-            <td><Sparkline values={shape} /></td>
-            <td>
-              <label>
-                <span class="sr-only">Usage category for {register.registerId}</span>
-                <select
-                  value={mapping?.registers[register.registerId] ?? 'Ignore'}
-                  onchange={(e) =>
-                    setCategory(
-                      register.registerId,
-                      (e.currentTarget as HTMLSelectElement).value as UsageCategory,
-                    )}
-                >
-                  {#each USAGE_CATEGORIES as category (category)}
-                    <option value={category}>{category}</option>
-                  {/each}
-                </select>
-              </label>
-            </td>
-            <td>
-              {#if firstDay}
-                <button type="button" onclick={() => toggleDay(key)}>
-                  {expandedDay[key] ? 'Hide' : 'Preview'}
-                  {firstDay.date}
-                </button>
-              {/if}
-            </td>
+            <th>Register</th>
+            <th>Meter serial</th>
+            <th>UOM</th>
+            <th>Interval length</th>
+            <th>Days</th>
+            <th>Date range</th>
+            <th>Total kWh</th>
+            <th>Shape</th>
+            <th>Usage category</th>
+            <th><span class="sr-only">Preview</span></th>
           </tr>
-          {#if firstDay && expandedDay[key]}
+        </thead>
+        <tbody>
+          {#each selected.registers as register (`${register.registerId}/${register.nmiSuffix}`)}
+            {@const key = `${selected.nmi}/${register.registerId}/${register.nmiSuffix}`}
+            {@const firstDay = register.days[0]}
+            {@const lastDay = register.days[register.days.length - 1]}
+            {@const shape = averageDayShape(register)}
             <tr>
-              <td colspan="10">
-                <code>{firstDay.values.map((v) => v.toFixed(4)).join(', ')}</code>
+              <td>{register.registerId}</td>
+              <td>{register.meterSerial}</td>
+              <td>{register.uom}</td>
+              <td>{register.intervalLength} min</td>
+              <td>{register.days.length}</td>
+              <td>{firstDay?.date} &ndash; {lastDay?.date}</td>
+              <td>{register.totalKwh.toFixed(2)}</td>
+              <td><Sparkline values={shape} /></td>
+              <td>
+                <label>
+                  <span class="sr-only">Usage category for {register.registerId}</span>
+                  <select
+                    value={mapping?.registers[register.registerId] ?? 'Ignore'}
+                    onchange={(e) =>
+                      setCategory(
+                        register.registerId,
+                        (e.currentTarget as HTMLSelectElement).value as UsageCategory,
+                      )}
+                  >
+                    {#each USAGE_CATEGORIES as category (category)}
+                      <option value={category}>{category}</option>
+                    {/each}
+                  </select>
+                </label>
+              </td>
+              <td>
+                {#if firstDay}
+                  <button type="button" onclick={() => toggleDay(key)}>
+                    {expandedDay[key] ? 'Hide' : 'Preview'}
+                    {firstDay.date}
+                  </button>
+                {/if}
               </td>
             </tr>
-          {/if}
-        {/each}
-      </tbody>
-    </table>
+            {#if firstDay && expandedDay[key]}
+              <tr>
+                <td colspan="10">
+                  <code>{firstDay.values.map((v) => v.toFixed(4)).join(', ')}</code>
+                </td>
+              </tr>
+            {/if}
+          {/each}
+        </tbody>
+      </table>
 
-    {#if mappingIssues.length > 0}
-      <p class="error" role="alert">
-        Register Mapping has issues: {mappingIssues.map((issue) => issue.message).join(' ')}
-      </p>
-    {:else if mapping}
-      <p role="status">Register Mapping confirmed.</p>
-    {/if}
-  {/if}
-
-  {#if parsed}
-    <div class="clear">
-      {#if confirmingClear}
-        <p role="alert">
-          This removes all stored usage and Register Mappings for every NMI on this device. Clearing
-          browser data loses everything regardless — usage never leaves your browser.
+      {#if mappingIssues.length > 0}
+        <p class="error" role="alert">
+          Register Mapping has issues: {mappingIssues.map((issue) => issue.message).join(' ')}
         </p>
-        <button type="button" onclick={clearUsageData}>Confirm clear</button>
-        <button type="button" onclick={() => (confirmingClear = false)}>Cancel</button>
-      {:else}
-        <button type="button" onclick={() => (confirmingClear = true)}>Clear my usage data</button>
+      {:else if mapping}
+        <p role="status">Register Mapping confirmed.</p>
       {/if}
-    </div>
+    {/if}
+
+    {#if parsed}
+      <div class="clear">
+        {#if confirmingClear}
+          <p role="alert">
+            This removes all stored usage and Register Mappings for every NMI on this device.
+            Clearing browser data loses everything regardless — usage never leaves your browser.
+          </p>
+          <button type="button" onclick={clearUsageData}>Confirm clear</button>
+          <button type="button" onclick={() => (confirmingClear = false)}>Cancel</button>
+        {:else}
+          <button type="button" onclick={() => (confirmingClear = true)}>Clear my usage data</button
+          >
+        {/if}
+      </div>
+    {/if}
   {/if}
 </section>
 
 <style>
   .error {
     color: #b00020;
+  }
+
+  .subtabs {
+    display: flex;
+    gap: 0.5rem;
+    margin: 0.5rem 0 1rem;
+  }
+
+  .subtabs button[aria-current='true'] {
+    font-weight: bold;
+    text-decoration: underline;
   }
 
   table {
