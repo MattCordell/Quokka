@@ -1,11 +1,5 @@
 export { computeFlatBill, priceFlatBill } from './flat';
-export {
-  computeTouBill,
-  priceTouBill,
-  aggregateGeneralWeek,
-  parseWeekSlotKey,
-  countGeneralDaysByDow,
-} from './tou';
+export { computeTouBill, priceTouBill, aggregateGeneralWeek, parseWeekSlotKey } from './tou';
 export { aggregateUsage } from './aggregate';
 export {
   daysInPeriod,
@@ -28,6 +22,7 @@ export {
   scaleGeneralWeek,
   missingDaysOfWeek,
   describeExtrapolation,
+  expectedDaysByDow,
 } from './billingPeriod';
 export type { Bill, BandCharge, CategoryUsage, Period, TotalBasis } from './types';
 export type { ManualBillInput, CalibrationResult } from './calibration';

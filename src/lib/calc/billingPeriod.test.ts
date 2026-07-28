@@ -9,11 +9,12 @@ import {
   scaleGeneralWeek,
   missingDaysOfWeek,
   describeExtrapolation,
+  expectedDaysByDow,
 } from './billingPeriod';
 import { aggregateUsage } from './aggregate';
-import { aggregateGeneralWeek, countGeneralDaysByDow, priceTouBill } from './tou';
+import { aggregateGeneralWeek, priceTouBill } from './tou';
 import { priceFlatBill } from './flat';
-import { daysInPeriod, isoToCompact } from './period';
+import { daysInPeriod, dayOfWeek, isoFromUtcMs, isoToCompact, toUtcMs } from './period';
 import { parseNem12 } from '../nem12';
 import type { NmiData, Register, RegisterDay } from '../nem12';
 import type { RegisterMapping } from '../mapping/types';
@@ -25,11 +26,9 @@ function readFixture(relativePath: string): string {
   return readFileSync(new URL(`../../../fixtures/${relativePath}`, import.meta.url), 'utf-8');
 }
 
-/** ISO date arithmetic via Date.UTC, matching period.ts's timezone-immune style. */
+/** ISO date arithmetic, matching period.ts's own timezone-immune toUtcMs/isoFromUtcMs style. */
 function isoPlusDays(iso: string, n: number): string {
-  const [y, m, d] = iso.split('-').map(Number);
-  const dt = new Date(Date.UTC(y, m - 1, d + n));
-  return `${dt.getUTCFullYear()}-${String(dt.getUTCMonth() + 1).padStart(2, '0')}-${String(dt.getUTCDate()).padStart(2, '0')}`;
+  return isoFromUtcMs(toUtcMs(iso) + n * 86_400_000);
 }
 
 /** A synthetic General register with one 1 kWh reading per day, `numDays` days starting `startIso`. */
@@ -227,6 +226,16 @@ describe('scaleCategoryUsage (ADR-0006)', () => {
   });
 });
 
+const EXPECTED_365_DOW = {
+  MON: 52,
+  TUE: 52,
+  WED: 53,
+  THU: 52,
+  FRI: 52,
+  SAT: 52,
+  SUN: 52,
+} as const;
+
 describe('scaleGeneralWeek (ADR-0006)', () => {
   it('scales each day of the week by its own coverage factor, not one blanket factor', () => {
     // TUE sampled once, WED sampled twice (e.g. a 3-day span Tue-Wed-Wed is impossible, but a
@@ -245,29 +254,68 @@ describe('scaleGeneralWeek (ADR-0006)', () => {
       SUN: 0,
     } as const;
 
-    const scaled = scaleGeneralWeek(week, daysByDow);
+    const scaled = scaleGeneralWeek(week, daysByDow, EXPECTED_365_DOW);
 
-    expect(scaled.get('TUE|0')).toBe(10 * (365 / 7 / 1));
-    expect(scaled.get('WED|0')).toBe(20 * (365 / 7 / 2));
+    expect(scaled.get('TUE|0')).toBe(10 * (52 / 1));
+    expect(scaled.get('WED|0')).toBe(20 * (53 / 2));
     // Proof the two factors actually differ (this is what a blanket factor would get wrong):
     expect(scaled.get('TUE|0')! / 10).not.toBeCloseTo(scaled.get('WED|0')! / 20, 5);
   });
 
-  it('does not scale a day of the week whose coverage already meets or exceeds 365/7', () => {
+  it('does not scale a day of the week whose coverage already meets or exceeds its expected count', () => {
     const week = new Map([['TUE|0', 100]]);
     const daysByDow = { MON: 0, TUE: 53, WED: 0, THU: 0, FRI: 0, SAT: 0, SUN: 0 } as const;
 
-    expect(scaleGeneralWeek(week, daysByDow).get('TUE|0')).toBe(100);
+    expect(scaleGeneralWeek(week, daysByDow, EXPECTED_365_DOW).get('TUE|0')).toBe(100);
   });
 
   it('leaves a day of the week absent from the map absent after scaling — no data is fabricated', () => {
     const week = new Map([['TUE|0', 10]]);
     const daysByDow = { MON: 0, TUE: 1, WED: 0, THU: 0, FRI: 0, SAT: 0, SUN: 0 } as const;
 
-    const scaled = scaleGeneralWeek(week, daysByDow);
+    const scaled = scaleGeneralWeek(week, daysByDow, EXPECTED_365_DOW);
 
     expect(scaled.has('MON|0')).toBe(false);
     expect([...scaled.keys()]).toEqual(['TUE|0']);
+  });
+
+  it('a gapless 365-day sample scales every slot by exactly 1 — no phantom inflation (round-2 finding #2)', () => {
+    // Regression for the bug a uniform ANNUAL_DAYS/7 (52.142857...) constant caused: a real
+    // calendar year is 52 weeks + 1 day, so six days-of-week occur 52 times and one occurs 53
+    // times, never the fractional average. Feeding an actual, gapless 365-day sample's daysByDow
+    // straight back in as expectedByDow (as expectedDaysByDow does when the period IS the
+    // reference window) must therefore score every day at coverageFactor 1, not ~1.0027.
+    const week = new Map([['TUE|0', 100]]);
+    const daysByDow = { MON: 52, TUE: 52, WED: 53, THU: 52, FRI: 52, SAT: 52, SUN: 52 } as const;
+
+    expect(scaleGeneralWeek(week, daysByDow, EXPECTED_365_DOW).get('TUE|0')).toBe(100);
+  });
+});
+
+describe('expectedDaysByDow (ADR-0006)', () => {
+  it('splits a 365-day reference year into six days at 52 occurrences and one at 53', () => {
+    const period = { start: '2025-01-01', end: '2025-12-31' }; // 2025 is not a leap year
+    const counts = expectedDaysByDow(period);
+
+    expect(Object.values(counts).reduce((a, b) => a + b, 0)).toBe(365);
+    expect(Object.values(counts).filter((n) => n === 53)).toHaveLength(1);
+    expect(Object.values(counts).filter((n) => n === 52)).toHaveLength(6);
+    // The day-of-week that gets the extra (53rd) occurrence is the one shared by both endpoints
+    // of the reference year (a 365-day inclusive span puts its start and end 364 = 52*7 days
+    // apart, so they always land on the same day-of-week).
+    expect(counts[dayOfWeek(isoToCompact('2025-12-31'))]).toBe(53);
+  });
+
+  it('depends only on period.end, not period.start — a short sample still projects against a full calendar year', () => {
+    const shortPeriod = { start: '2025-07-01', end: '2025-07-02' }; // the 2-day golden span
+    const fullYearEndingSameDay = { start: '2024-07-03', end: '2025-07-02' };
+
+    expect(expectedDaysByDow(shortPeriod)).toEqual(expectedDaysByDow(fullYearEndingSameDay));
+  });
+
+  it('matches the golden fixture reference window: TUE=52, WED=53, everything else 52', () => {
+    const period = { start: '2025-07-01', end: '2025-07-02' };
+    expect(expectedDaysByDow(period)).toEqual(EXPECTED_365_DOW);
   });
 });
 
@@ -326,21 +374,27 @@ describe('golden-fixture extrapolation proof (ADR-0006)', () => {
     expect(bill.extrapolation).toEqual({ factor: 182.5, sampledDays: 2 });
   });
 
-  it('countGeneralDaysByDow finds exactly one Tuesday and one Wednesday, nothing else', () => {
-    const daysByDow = countGeneralDaysByDow(usage, mapping, period);
+  it('aggregateGeneralWeek finds exactly one Tuesday and one Wednesday, nothing else', () => {
+    const { daysByDow } = aggregateGeneralWeek(usage, mapping, period);
     expect(daysByDow.TUE).toBe(1);
     expect(daysByDow.WED).toBe(1);
     expect(missingDaysOfWeek(daysByDow)).toEqual(['MON', 'THU', 'FRI', 'SAT', 'SUN']);
   });
 
+  it('expectedDaysByDow for the golden span matches the real calendar year ending 2025-07-02: TUE=52, WED=53', () => {
+    // TUE and WED both get sampled once (previous test), but they are NOT equally represented in
+    // a real year — round-2 finding #2's fix — so they must not share one factor.
+    expect(expectedDaysByDow(period)).toEqual(EXPECTED_365_DOW);
+  });
+
   it(
-    'prices the extrapolated TOU total from the actual per-day-of-week coverage, ' +
-      'not the flat plan’s category-level 182.5x factor',
+    'prices the extrapolated TOU total from the actual per-day-of-week coverage against the ' +
+      'real calendar split (52 Tuesdays, 53 Wednesdays), not a uniform 365/7 factor',
     () => {
       const plan = JSON.parse(readFixture('plans/tou-plan.json')) as TouPlan;
       const agg = scaleCategoryUsage(aggregateUsage(usage, mapping, period));
-      const daysByDow = countGeneralDaysByDow(usage, mapping, period);
-      const generalWeek = scaleGeneralWeek(aggregateGeneralWeek(usage, mapping, period), daysByDow);
+      const { week, daysByDow } = aggregateGeneralWeek(usage, mapping, period);
+      const generalWeek = scaleGeneralWeek(week, daysByDow, expectedDaysByDow(period));
 
       const bill = priceTouBill(
         plan,
@@ -351,16 +405,15 @@ describe('golden-fixture extrapolation proof (ADR-0006)', () => {
         describeExtrapolation(agg),
       );
 
-      // Both sampled days (TUE, WED) have exactly 1 occurrence each, so both get the identical
-      // per-day-of-week factor 365/7 — the golden 20/38 peak/off-peak kWh split (ADR-0015) scales
-      // by that one factor, not by the flat plan's 182.5 (365/2): the TOU model only projects the
-      // 2 days of the week it actually measured, unlike the flat model's date-count ratio, which
-      // implicitly assumes every day of the year resembles the 2 sampled ones. This divergence is
-      // expected and is exactly what the "no General data for {days}" disclosure (Compare.svelte)
-      // exists to explain.
-      const factor = 365 / 7;
-      const peakKwh = 20 * factor;
-      const offpeakKwh = 38 * factor;
+      // Tuesday (1 sample) projects against 52 real Tuesdays in the reference year; Wednesday (1
+      // sample) against 53 real Wednesdays — a different factor per day, not the flat plan's
+      // uniform 182.5 (365/2). The TOU model only projects the 2 days of the week it actually
+      // measured, unlike the flat model's date-count ratio, which implicitly assumes every day of
+      // the year resembles the 2 sampled ones. This divergence is expected and is exactly what
+      // Compare.svelte's missingDows exclusion (round-2 finding #1) exists to keep out of the
+      // ranked comparison, rather than disclosed alongside a $0 TOU band as round 1 did.
+      const peakKwh = 10 * 52 + 10 * 53; // 10 kWh/day peak on both the sampled Tue and Wed
+      const offpeakKwh = 19 * 52 + 19 * 53; // 19 kWh/day off-peak on both
       const cl1Kwh = 4 * 182.5; // CL1's own category coverage (2 days) is unaffected by the DOW model
       const generationKwh = 8 * 182.5;
       const supplyCents = (110 + 5) * 365;
@@ -371,8 +424,12 @@ describe('golden-fixture extrapolation proof (ADR-0006)', () => {
         supplyCents + generalUsageCents + cl1Cents - solarCreditCents,
       );
 
+      expect(peakKwh).toBe(1050);
+      expect(offpeakKwh).toBe(1995);
+      expect(expectedTotal).toBe(151650); // $1516.50
       expect(bill.bestCaseTotalCents).toBe(expectedTotal);
-      expect(bill.bestCaseTotalCents).not.toBe(405150); // the pre-fix (blanket-factor) figure
+      expect(bill.bestCaseTotalCents).not.toBe(405150); // the original blanket-factor bug
+      expect(bill.bestCaseTotalCents).not.toBe(150954); // round 1's uniform-365/7-per-DOW bug
       expect(bill.extrapolation).toEqual({ factor: 182.5, sampledDays: 2 });
 
       const peak = bill.bands?.find((b) => b.label === 'Peak');
@@ -382,21 +439,20 @@ describe('golden-fixture extrapolation proof (ADR-0006)', () => {
     },
   );
 
-  it('band proportions match the unscaled sample here because both sampled days share equal (1x) coverage', () => {
-    // This is not a general shape-preservation guarantee under extrapolation — it holds in this
-    // specific fixture only because daysByDow.TUE === daysByDow.WED === 1, so both days receive
-    // the identical per-day-of-week factor. scaleGeneralWeek's own tests above prove the factor
-    // differs when day-of-week coverage is uneven, which is the case shape is NOT trivially
-    // preserved by construction.
+  it('band proportions match the unscaled sample here because the sampled days share an identical daily shape', () => {
+    // Not a general shape-preservation guarantee under extrapolation: TUE and WED get *different*
+    // factors now (52 vs 53, previous test) — the ratio is preserved here only because the golden
+    // fixture's Tuesday and Wednesday have identical peak/off-peak kWh (10/19 each), so both bands
+    // scale by the same (factorTue + factorWed) combination regardless of the two factors
+    // differing. A sample where the sampled days' shapes differ would not preserve the ratio.
     const plan = JSON.parse(readFixture('plans/tou-plan.json')) as TouPlan;
     const unscaledAgg = aggregateUsage(usage, mapping, period);
-    const unscaledWeek = aggregateGeneralWeek(usage, mapping, period);
+    const { week: unscaledWeek, daysByDow } = aggregateGeneralWeek(usage, mapping, period);
     const unscaledDays = daysInPeriod(period);
     const unscaledBill = priceTouBill(plan, unscaledAgg, unscaledWeek, unscaledDays, period);
 
     const scaledAgg = scaleCategoryUsage(unscaledAgg);
-    const daysByDow = countGeneralDaysByDow(usage, mapping, period);
-    const scaledWeek = scaleGeneralWeek(unscaledWeek, daysByDow);
+    const scaledWeek = scaleGeneralWeek(unscaledWeek, daysByDow, expectedDaysByDow(period));
     const scaledBill = priceTouBill(plan, scaledAgg, scaledWeek, ANNUAL_DAYS, period);
 
     const scaledTotal = scaledBill.bands!.reduce((sum, b) => sum + b.kwh, 0);
@@ -406,5 +462,55 @@ describe('golden-fixture extrapolation proof (ADR-0006)', () => {
       const unscaledShare = unscaledBill.bands![i].kwh / unscaledTotal;
       expect(scaledShare).toBeCloseTo(unscaledShare, 10);
     });
+  });
+});
+
+describe('gapless-year regression (round-2 finding #2)', () => {
+  it('a gapless 365-day General sample gets extrapolation:null and no DOW scaling end-to-end', () => {
+    const start = '2025-01-01';
+    const days: RegisterDay[] = [];
+    for (let i = 0; i < 365; i++) {
+      days.push({
+        date: isoToCompact(isoPlusDays(start, i)),
+        values: new Array(48).fill(1),
+        quality: new Array(48).fill('A'),
+      });
+    }
+    const register: Register = {
+      nmi: '6407000000',
+      registerId: 'E1',
+      nmiSuffix: 'E1',
+      meterSerial: 'METER01',
+      uom: 'kWh',
+      intervalLength: 30,
+      intervalsPerDay: 48,
+      days,
+      totalKwh: 365 * 24,
+    };
+    const usage: NmiData = {
+      nmi: '6407000000',
+      registers: [register],
+      firstDate: days[0].date,
+      lastDate: days[days.length - 1].date,
+      dayCount: days.length,
+    };
+    const mapping: RegisterMapping = { nmi: '6407000000', registers: { E1: 'General' } };
+    const period = { start, end: isoPlusDays(start, 364) };
+    expect(daysInPeriod(period)).toBe(365);
+
+    const agg = aggregateUsage(usage, mapping, period);
+    expect(agg.daysWithData.General).toBe(365);
+    expect(describeExtrapolation(agg)).toBeNull();
+
+    const { week, daysByDow } = aggregateGeneralWeek(usage, mapping, period);
+    const expectedByDow = expectedDaysByDow(period);
+    // The sample's real per-day-of-week counts exactly match the reference year's, because the
+    // reference window (ending at period.end) and the sampled period are the same 365 days.
+    expect(daysByDow).toEqual(expectedByDow);
+
+    const scaledWeek = scaleGeneralWeek(week, daysByDow, expectedByDow);
+    for (const [key, kwh] of week) {
+      expect(scaledWeek.get(key)).toBe(kwh); // factor 1 everywhere — no +0.23% inflation
+    }
   });
 });

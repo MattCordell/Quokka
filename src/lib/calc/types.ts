@@ -89,13 +89,17 @@ export interface Bill extends BillTotals {
 
   /**
    * Non-null when this Bill was priced under ADR-0006 annual extrapolation: `factor` is the
-   * General-category scaling factor applied (ANNUAL_DAYS / sampledDays), `sampledDays` the actual
-   * General-category day-coverage it was derived from. `null` for a measured bill (including a
-   * >=365-day annual window with full coverage, where `factor` is 1 and nothing was scaled).
-   * Carried on the Bill itself — not left as a caller-local flag — so any future consumer (an
-   * export, a persisted comparison, `computeCalibration`) can tell a projected figure from a
-   * measured one without re-deriving it from UI state (ADR-0013: the engine is the framework-
-   * agnostic source of truth for billing math, extrapolation included).
+   * General **category**'s scaling factor (ANNUAL_DAYS / sampledDays), `sampledDays` the actual
+   * General-category day-coverage it was derived from — the same descriptor is passed to both a
+   * flat and a TOU bill priced over the same period, so it's comparable across plan types. It
+   * describes that category-level projection only: a TOU bill's `bands` are scaled per-day-of-week
+   * (`scaleGeneralWeek`), a different — and, for an uneven sample, different-valued — factor per
+   * day-of-week, so `factor`/`sampledDays` must not be read as "the number `bands` was multiplied
+   * by". `null` for a measured bill (including a >=365-day annual window with full coverage, where
+   * nothing was scaled). Carried on the Bill itself — not left as a caller-local flag — so any
+   * future consumer (an export, a persisted comparison, `computeCalibration`) can tell a projected
+   * figure from a measured one without re-deriving it from UI state (ADR-0013: the engine is the
+   * framework-agnostic source of truth for billing math, extrapolation included).
    */
   extrapolation: { factor: number; sampledDays: number } | null;
 }

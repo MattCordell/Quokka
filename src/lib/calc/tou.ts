@@ -27,17 +27,29 @@ export function parseWeekSlotKey(key: string): { day: TouDay; minute: number } {
 
 /**
  * A plan-independent weekly profile of General kWh, keyed by `${TouDay}|${startMinute}` (the
- * interval's own day-of-week and minute-of-day). Registers mapped to General are summed
- * (ADR-0011); `quality === 'N'` zeroes that interval, matching aggregateUsage's rule. Computed
- * once so multiple TOU plans can be priced against the same profile (mirrors the
- * aggregate-once/price-many split aggregateUsage already gives flat plans).
+ * interval's own day-of-week and minute-of-day), plus the distinct in-period dates behind it,
+ * bucketed by day-of-week (deduped across General registers, matching the `week` map's own
+ * dedup). Registers mapped to General are summed (ADR-0011); `quality === 'N'` zeroes that
+ * interval, matching aggregateUsage's rule. `daysByDow` is the actual sample size behind each
+ * day-of-week's slice of `week` — annual extrapolation (ADR-0006, `scaleGeneralWeek`) needs it
+ * per-day-of-week rather than as one combined day count, because a short or unevenly-distributed
+ * sample doesn't represent every weekday/weekend day equally (e.g. a 2-day sample covering only a
+ * Tuesday and a Wednesday has zero data for the other five days of the week — no scaling factor
+ * can manufacture what was never measured). Both are returned from one pass over the registers
+ * (rather than two separate functions each re-walking the same data) so multiple TOU plans can be
+ * priced against the same profile (mirrors the aggregate-once/price-many split aggregateUsage
+ * already gives flat plans).
  */
 export function aggregateGeneralWeek(
   usage: NmiData,
   mapping: RegisterMapping,
   period: Period,
-): Map<string, number> {
+): { week: Map<string, number>; daysByDow: Record<TouDay, number> } {
   const week = new Map<string, number>();
+  const datesByDow = Object.fromEntries(TOU_DAYS.map((day) => [day, new Set<string>()])) as Record<
+    TouDay,
+    Set<string>
+  >;
 
   for (const register of usage.registers) {
     if (mapping.registers[register.registerId] !== 'General') continue;
@@ -52,6 +64,7 @@ export function aggregateGeneralWeek(
     for (const day of register.days) {
       if (!dayInPeriod(day.date, period)) continue;
       const dow = dayOfWeek(day.date);
+      datesByDow[dow].add(day.date);
 
       for (let i = 0; i < day.values.length; i++) {
         const kwh = resolveIntervalKwh(day.quality[i], day.values[i]);
@@ -61,40 +74,11 @@ export function aggregateGeneralWeek(
     }
   }
 
-  return week;
-}
+  const daysByDow = Object.fromEntries(
+    TOU_DAYS.map((day) => [day, datesByDow[day].size]),
+  ) as Record<TouDay, number>;
 
-/**
- * Distinct in-period dates with a General reading, bucketed by day-of-week (deduped across
- * General registers, mirroring `aggregateGeneralWeek`'s own dedup). This is the actual sample
- * size behind each day-of-week's slice of `aggregateGeneralWeek`'s output — annual extrapolation
- * (ADR-0006, `scaleGeneralWeek`) needs it per-day-of-week rather than as one combined day count,
- * because a short or unevenly-distributed sample doesn't represent every weekday/weekend day
- * equally (e.g. a 2-day sample covering only a Tuesday and a Wednesday has zero data for the
- * other five days of the week — no scaling factor can manufacture what was never measured).
- */
-export function countGeneralDaysByDow(
-  usage: NmiData,
-  mapping: RegisterMapping,
-  period: Period,
-): Record<TouDay, number> {
-  const datesByDow = Object.fromEntries(TOU_DAYS.map((day) => [day, new Set<string>()])) as Record<
-    TouDay,
-    Set<string>
-  >;
-
-  for (const register of usage.registers) {
-    if (mapping.registers[register.registerId] !== 'General') continue;
-    for (const day of register.days) {
-      if (!dayInPeriod(day.date, period)) continue;
-      datesByDow[dayOfWeek(day.date)].add(day.date);
-    }
-  }
-
-  return Object.fromEntries(TOU_DAYS.map((day) => [day, datesByDow[day].size])) as Record<
-    TouDay,
-    number
-  >;
+  return { week, daysByDow };
 }
 
 /**
@@ -189,6 +173,6 @@ export function computeTouBill(
 ): Bill {
   const days = daysInPeriod(period);
   const agg = aggregateUsage(usage, mapping, period);
-  const generalWeek = aggregateGeneralWeek(usage, mapping, period);
-  return priceTouBill(plan, agg, generalWeek, days, period);
+  const { week } = aggregateGeneralWeek(usage, mapping, period);
+  return priceTouBill(plan, agg, week, days, period);
 }

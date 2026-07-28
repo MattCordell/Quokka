@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { computeTouBill, priceTouBill, aggregateGeneralWeek, countGeneralDaysByDow } from './tou';
+import { computeTouBill, priceTouBill, aggregateGeneralWeek } from './tou';
 import { aggregateUsage } from './aggregate';
 import { daysInPeriod } from './period';
 import { CalcError } from './types';
@@ -144,7 +144,7 @@ describe('priceTouBill / computeTouBill', () => {
 
     const viaCompute = computeTouBill(plan, usage, mapping, period);
     const agg = aggregateUsage(usage, mapping, period);
-    const generalWeek = aggregateGeneralWeek(usage, mapping, period);
+    const { week: generalWeek } = aggregateGeneralWeek(usage, mapping, period);
     const days = daysInPeriod(period);
     const viaPrice = priceTouBill(plan, agg, generalWeek, days, period);
 
@@ -252,7 +252,7 @@ describe('priceTouBill / computeTouBill', () => {
     const usage = nmiData([register()]);
     const mapping: RegisterMapping = { nmi: '6407000000', registers: { E1: 'General' } };
     const agg = aggregateUsage(usage, mapping, period);
-    const generalWeek = aggregateGeneralWeek(usage, mapping, period);
+    const { week: generalWeek } = aggregateGeneralWeek(usage, mapping, period);
     const plan = touPlan([PEAK, OFFPEAK_WEEKDAY]);
 
     expect(priceTouBill(plan, agg, generalWeek, 1, period).extrapolation).toBeNull();
@@ -264,16 +264,16 @@ describe('priceTouBill / computeTouBill', () => {
   });
 });
 
-describe('countGeneralDaysByDow', () => {
+describe('aggregateGeneralWeek — daysByDow', () => {
   it('counts one distinct date per day of the week it falls on', () => {
     const usage = nmiData([register()]); // single Tuesday
     const mapping: RegisterMapping = { nmi: '6407000000', registers: { E1: 'General' } };
 
-    const counts = countGeneralDaysByDow(usage, mapping, period);
+    const { daysByDow } = aggregateGeneralWeek(usage, mapping, period);
 
-    expect(counts.TUE).toBe(1);
-    expect(counts.MON).toBe(0);
-    expect(counts.WED).toBe(0);
+    expect(daysByDow.TUE).toBe(1);
+    expect(daysByDow.MON).toBe(0);
+    expect(daysByDow.WED).toBe(0);
   });
 
   it('dedupes the same date across two General registers (ADR-0011)', () => {
@@ -286,7 +286,7 @@ describe('countGeneralDaysByDow', () => {
       registers: { E1: 'General', E2: 'General' },
     };
 
-    expect(countGeneralDaysByDow(usage, mapping, period).TUE).toBe(1);
+    expect(aggregateGeneralWeek(usage, mapping, period).daysByDow.TUE).toBe(1);
   });
 
   it('excludes a non-General register and an out-of-period day', () => {
@@ -303,9 +303,9 @@ describe('countGeneralDaysByDow', () => {
       registers: { E1: 'General', E3: 'CL1' },
     };
 
-    const counts = countGeneralDaysByDow(usage, mapping, period);
+    const { daysByDow } = aggregateGeneralWeek(usage, mapping, period);
 
-    expect(counts.TUE).toBe(1);
-    expect(counts.SAT).toBe(0);
+    expect(daysByDow.TUE).toBe(1);
+    expect(daysByDow.SAT).toBe(0);
   });
 });

@@ -3,7 +3,6 @@
   import {
     aggregateUsage,
     aggregateGeneralWeek,
-    countGeneralDaysByDow,
     daysInPeriod,
     priceFlatBill,
     priceTouBill,
@@ -16,11 +15,12 @@
     scaleGeneralWeek,
     describeExtrapolation,
     missingDaysOfWeek,
+    expectedDaysByDow,
     ANNUAL_DAYS,
   } from '../lib/calc';
   import { USAGE_CATEGORIES } from '../lib/mapping/types';
   import { validateBandCoverage } from '../lib/plan/coverage';
-  import type { FlatPlan, TouPlan } from '../lib/plan/types';
+  import type { FlatPlan, TouPlan, TouDay } from '../lib/plan/types';
   import { formatCents } from '../lib/format';
   import { rankPlanBills, type RankBasis, type RankedPlanBill } from '../lib/compare/rank';
   import { hourOfDayProfile } from '../lib/usage/shape';
@@ -79,6 +79,14 @@
     return value;
   }
 
+  // toFixed(1) alone renders any factor under 1.05 as "x1.0" — indistinguishable from "no scaling
+  // happened", which reads as a bug rather than the small correction it actually is (a ~350-day
+  // sample lands here routinely). Two significant figures for a small factor keeps large ones
+  // (e.g. x182.5) just as readable.
+  function formatFactor(factor: number): string {
+    return factor.toFixed(factor < 10 ? 2 : 1);
+  }
+
   // The full data span (unclamped by any override) that the presets below resolve against.
   let dataSpan = $derived.by(() => {
     if (!usage) return null;
@@ -88,14 +96,15 @@
   // resolveLastQuarter only checks that the quarter's calendar bounds fit inside the data span's
   // endpoints (ADR-0009) — it can't see whether the data actually has readings throughout, so a
   // file with e.g. Jan-Mar and Jul readings but nothing between could otherwise resolve a quarter
-  // with an empty middle month. daysWithData is 0 for any category with no mapped register (by
-  // construction), so checking "some category has any day of data" per month, with no extra
-  // per-category filtering needed, catches an entirely-empty month and disables the preset.
+  // with an empty middle month. Checked against General specifically, not "any category has any
+  // day of data": a fully-covered non-General register (e.g. solar Generation reading every day)
+  // must not mask a General gap that shares the same month, the same masking CategoryUsage.
+  // daysWithData is itself split per-category to prevent (calc/types.ts).
   let lastQuarterCandidate = $derived(dataSpan ? resolveLastQuarter(dataSpan) : null);
   let lastQuarterPeriod = $derived.by(() => {
     if (!lastQuarterCandidate || !usage || !mapping) return null;
-    const monthsHaveData = quarterMonthPeriods(lastQuarterCandidate).every((month) =>
-      Object.values(aggregateUsage(usage, mapping, month).daysWithData).some((n) => n > 0),
+    const monthsHaveData = quarterMonthPeriods(lastQuarterCandidate).every(
+      (month) => aggregateUsage(usage, mapping, month).daysWithData.General > 0,
     );
     return monthsHaveData ? lastQuarterCandidate : null;
   });
@@ -153,18 +162,23 @@
   // unconditionally (the hour-of-day usage-shape chart needs it even with zero TOU plans saved),
   // but aggregateGeneralWeek throws CalcError for a General register whose interval length
   // doesn't divide the 30-min TOU coverage grid (e.g. an 18-min meter) — caught here rather than
-  // taking down the whole screen for a flat-only user with such a meter.
+  // taking down the whole screen for a flat-only user with such a meter. Its `daysByDow` output
+  // comes back alongside `week` from the same pass, not a separate re-walk of the registers.
   //
   // Annual extrapolation (ADR-0006) scales these same aggregated inputs — per category
-  // (scaleCategoryUsage) and per day-of-week (scaleGeneralWeek) from their own real coverage,
-  // never one blanket factor — rather than adding a second pricing path; priceFlatBill/
-  // priceTouBill below are unchanged.
+  // (scaleCategoryUsage) and per day-of-week (scaleGeneralWeek, against expectedDaysByDow's real
+  // calendar split, not a constant fraction) from their own real coverage, never one blanket
+  // factor — rather than adding a second pricing path; priceFlatBill/priceTouBill below are
+  // unchanged.
   let periodAgg = $derived.by(() => {
     if (!usage || !mapping || !period || !periodValid) return null;
     let generalWeek: Map<string, number>;
+    let generalDaysByDow: Record<TouDay, number> | null = null;
     let generalWeekError: string | null = null;
     try {
-      generalWeek = aggregateGeneralWeek(usage, mapping, period);
+      const result = aggregateGeneralWeek(usage, mapping, period);
+      generalWeek = result.week;
+      generalDaysByDow = result.daysByDow;
     } catch (e) {
       if (!(e instanceof CalcError)) throw e;
       generalWeek = new Map();
@@ -175,18 +189,21 @@
     const extrapolation = annualActive ? describeExtrapolation(agg) : null;
     // A day-of-week with zero General samples can't be scaled into existence (scaleGeneralWeek's
     // own doc comment) — computed once here so both the scaling and the disclosure below share it.
-    const generalDaysByDow =
-      annualActive && !generalWeekError ? countGeneralDaysByDow(usage, mapping, period) : null;
+    const expectedByDow = annualActive && generalDaysByDow ? expectedDaysByDow(period) : null;
 
     return {
       period,
       days: annualActive ? ANNUAL_DAYS : sampledDays,
       sampledDays,
       agg: annualActive ? scaleCategoryUsage(agg) : agg,
-      generalWeek: generalDaysByDow ? scaleGeneralWeek(generalWeek, generalDaysByDow) : generalWeek,
+      generalWeek:
+        generalDaysByDow && expectedByDow
+          ? scaleGeneralWeek(generalWeek, generalDaysByDow, expectedByDow)
+          : generalWeek,
       generalWeekError,
       extrapolation,
-      missingDows: generalDaysByDow ? missingDaysOfWeek(generalDaysByDow) : [],
+      missingDows:
+        annualActive && generalDaysByDow ? missingDaysOfWeek(generalDaysByDow) : ([] as TouDay[]),
     };
   });
 
@@ -204,20 +221,35 @@
   // Pricing a TOU plan against an empty generalWeek (the generalWeekError case) would silently
   // return a supply-plus-CL-only bill — a wrong number presented with full confidence, the one
   // failure mode a money tool can't have — so every TOU plan is excluded from rows, not just the
-  // ones with invalid Band Coverage.
+  // ones with invalid Band Coverage. The same applies when annual mode has no General data for
+  // one or more days of the week (missingDows non-empty): scaleGeneralWeek can't project those
+  // days from nothing, so any band scheduled on them prices at $0, dragging that TOU plan's total
+  // down by an amount that has nothing to do with its rates — while every flat plan in the same
+  // list is scaled off the full General category total. Ranking the two bases against each other
+  // silently inverts which plan looks cheapest (round-2 review finding #1), so TOU plans are
+  // excluded here too rather than shown understated; the missingDows banner below explains why.
   let rows = $derived.by(() => {
     if (!periodAgg) return [];
-    const { period: p, days, agg, generalWeek, generalWeekError, extrapolation } = periodAgg;
+    const {
+      period: p,
+      days,
+      agg,
+      generalWeek,
+      generalWeekError,
+      extrapolation,
+      missingDows,
+    } = periodAgg;
     const flatRows = flatPlans.map((plan) => ({
       plan,
       bill: priceFlatBill(plan, agg, days, p, extrapolation),
     }));
-    const touRows = generalWeekError
-      ? []
-      : priceableTouPlans.map((plan) => ({
-          plan,
-          bill: priceTouBill(plan, agg, generalWeek, days, p, extrapolation),
-        }));
+    const touRows =
+      generalWeekError || missingDows.length > 0
+        ? []
+        : priceableTouPlans.map((plan) => ({
+            plan,
+            bill: priceTouBill(plan, agg, generalWeek, days, p, extrapolation),
+          }));
     return [...flatRows, ...touRows];
   });
 
@@ -226,8 +258,12 @@
   let cl1Applicable = $derived(periodAgg?.agg.mappedCategories.CL1 ?? false);
   let cl2Applicable = $derived(periodAgg?.agg.mappedCategories.CL2 ?? false);
 
+  // Suppressed under the same condition as the TOU rows above (missingDows non-empty): this
+  // chart's absolute kWh comes from the same per-day-of-week-scaled generalWeek a TOU plan would
+  // be priced against, so it carries the identical understatement for whichever day-of-week has
+  // no data — showing it here would contradict the exclusion rationale above.
   let hourOfDayData = $derived(
-    periodAgg && !periodAgg.generalWeekError
+    periodAgg && !periodAgg.generalWeekError && periodAgg.missingDows.length === 0
       ? hourOfDayProfile(periodAgg.generalWeek).map((value, hour) => ({
           label: `${hour}:00`,
           value,
@@ -369,15 +405,24 @@
           <p class="note">
             Billing {period.start} to {period.end} ({periodAgg.days} day{periodAgg.days === 1
               ? ''
-              : 's'} for the supply charge).
+              : 's'} for the supply charge{#if periodAgg.extrapolation}, normalised from {periodAgg
+                .extrapolation.sampledDays} sampled day{periodAgg.extrapolation.sampledDays === 1
+                ? ''
+                : 's'}{/if}).
           </p>
 
+          <!-- These advisory paragraphs are static on render, not mid-interaction interruptions,
+               so they intentionally carry no role="alert": several can appear in the same tick
+               (extrapolation banner + missing-days banner + one line per gappy category), and
+               stacking several assertive live regions just means a screen reader user hears
+               fragments of the last one rather than each in turn. They're already visible and in
+               document order, which is enough. -->
           {#if periodAgg.extrapolation}
-            <p class="banner" role="alert">
+            <p class="banner">
               <strong>Estimated annual figure.</strong> Based on {periodAgg.extrapolation
                 .sampledDays}
               day{periodAgg.extrapolation.sampledDays === 1 ? '' : 's'} of General data within {period.start}
-              to {period.end}, scaled x{periodAgg.extrapolation.factor.toFixed(1)} to a 365-day year.
+              to {period.end}, scaled x{formatFactor(periodAgg.extrapolation.factor)} to a 365-day year.
               This is an extrapolated estimate, not a measured annual bill — it may be seasonally biased
               (e.g. a winter-only sample over-weights heating), or understated if the shortfall reflects
               a data gap rather than a genuinely short history.
@@ -385,17 +430,28 @@
           {/if}
 
           {#if periodAgg.missingDows.length > 0}
-            <p class="banner" role="alert">
-              No General data for {periodAgg.missingDows.join(', ')} in the sampled period — any time-of-use
-              band scheduled on {periodAgg.missingDows.length === 1 ? 'that day' : 'those days'} shows
-              as $0 in this estimate, not a true measured value.
+            <p class="banner">
+              <strong>Time-of-use plans excluded from this estimate.</strong> No General data for {periodAgg.missingDows.join(
+                ', ',
+              )} in the sampled period — projecting a time-of-use bill would price every band scheduled
+              on {periodAgg.missingDows.length === 1 ? 'that day' : 'those days'} at $0, understating
+              it against the flat-rate plans in the same list. Switch to Custom or Last quarter to see
+              time-of-use pricing for this property, or import data covering every day of the week.
             </p>
           {/if}
 
           {#each coverageGaps as gap (gap.category)}
-            <p class="note" role="alert">
+            <p class="banner">
               {gap.category}: {periodAgg.sampledDays - gap.daysWithData} of {periodAgg.sampledDays} days
-              in this period have no data — totals (and any annual estimate) are understated by that shortfall.
+              in this period have no data —
+              {#if periodAgg.extrapolation}
+                the annual estimate projects from the remaining {gap.daysWithData} day{gap.daysWithData ===
+                1
+                  ? ''
+                  : 's'}, so it assumes the missing days resemble them.
+              {:else}
+                totals are understated by that shortfall.
+              {/if}
             </p>
           {/each}
 
@@ -559,6 +615,12 @@
           {#if shapeView === 'hourOfDay'}
             {#if periodAgg.generalWeekError}
               <p class="note">Usage shape chart unavailable: {periodAgg.generalWeekError}</p>
+            {:else if periodAgg.missingDows.length > 0}
+              <p class="note">
+                Usage shape chart unavailable: no General data for {periodAgg.missingDows.join(
+                  ', ',
+                )} in the sampled period, so an annual hour-of-day projection would be incomplete.
+              </p>
             {:else}
               <UsageShapeChart
                 data={hourOfDayData}

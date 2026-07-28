@@ -1,14 +1,11 @@
 import { USAGE_CATEGORIES, type UsageCategory } from '../mapping/types';
-import type { TouDay } from '../plan/types';
+import { TOU_DAYS, type TouDay } from '../plan/types';
 import { CalcError, type CategoryUsage, type Period } from './types';
-import { daysInPeriod, formatIso, isoFromUtcMs, toUtcMs } from './period';
+import { daysInPeriod, dayOfWeek, formatIso, isoFromUtcMs, isoToCompact, toUtcMs } from './period';
 import { parseWeekSlotKey } from './tou';
 
 /** ADR-0006: "annual" always normalises to a flat 365-day figure; leap years are not special-cased. */
 export const ANNUAL_DAYS = 365;
-
-/** A day-of-week's expected share of a flat 365-day year (not calendar-aligned; see ANNUAL_DAYS). */
-const DOW_ANNUAL_OCCURRENCES = ANNUAL_DAYS / 7;
 
 /** 1-based month's last day, via the "day 0 of the following month" trick (leap years fall out for free). */
 function lastDayOfMonth(year: number, month: number): number {
@@ -93,6 +90,44 @@ function coverageFactor(sampled: number, expected: number): number {
   return sampled > 0 && sampled < expected ? expected / sampled : 1;
 }
 
+/** How many times each day-of-week occurs within `period`, inclusive of both endpoints (ADR-0005). */
+function daysByDowInPeriod(period: Period): Record<TouDay, number> {
+  const counts = Object.fromEntries(TOU_DAYS.map((day) => [day, 0])) as Record<TouDay, number>;
+  const totalDays = daysInPeriod(period);
+  const startMs = toUtcMs(period.start);
+  for (let i = 0; i < totalDays; i++) {
+    const iso = isoFromUtcMs(startMs + i * 86_400_000);
+    counts[dayOfWeek(isoToCompact(iso))]++;
+  }
+  return counts;
+}
+
+/**
+ * The most recent `ANNUAL_DAYS` calendar days ending at `end` — a canonical reference year against
+ * which `expectedDaysByDow` counts each day-of-week's true occurrence split, regardless of how
+ * long the actual sampled period is. A 2-day sample still needs to know a *real* year's 52/53
+ * split to project against, not the 2-day span itself (which would trivially match its own two
+ * sampled days and produce no scaling at all). Mirrors `resolveAnnualPeriod`'s >= ANNUAL_DAYS
+ * branch.
+ */
+function annualReferenceWindow(end: string): Period {
+  return { start: isoFromUtcMs(toUtcMs(end) - (ANNUAL_DAYS - 1) * 86_400_000), end };
+}
+
+/**
+ * Each day-of-week's expected occurrence count in a canonical 365-day year ending at `period.end`
+ * (see `annualReferenceWindow`) — the denominator `scaleGeneralWeek` compares real sample coverage
+ * against, in place of the constant `ANNUAL_DAYS / 7` (52.142857...). A calendar year is 52 weeks
+ * + 1 day, so exactly one day-of-week occurs 53 times and the other six occur 52 times — never a
+ * fraction. Using the exact integer split (rather than the same fractional average for every day)
+ * means a genuinely gapless 365-day sample has `sampled === expected` for every day and scores
+ * factor 1 (see `scaleGeneralWeek`), instead of six of the seven days being silently inflated
+ * ~0.27% by a denominator no real calendar year can actually match.
+ */
+export function expectedDaysByDow(period: Period): Record<TouDay, number> {
+  return daysByDowInPeriod(annualReferenceWindow(period.end));
+}
+
 /**
  * Scales `kwhByCategory` for annual extrapolation (ADR-0006), one category at a time: each
  * category's factor is `ANNUAL_DAYS / daysWithData[category]`, not one blanket factor across all
@@ -116,26 +151,31 @@ export function scaleCategoryUsage(agg: CategoryUsage): CategoryUsage {
 
 /**
  * Scales every weekly General slot for annual extrapolation, one day-of-week at a time: each
- * day-of-week's factor is `(ANNUAL_DAYS / 7) / daysByDow[day]` (its own actual sample size, from
- * `countGeneralDaysByDow`), not one blanket factor applied to the whole map. A single global
- * factor (raw total scaled by `ANNUAL_DAYS / sampledDays`) silently mis-weights any sample that
- * isn't an exact multiple of 7 days: a day-of-week sampled fewer times than others would be
- * under-represented in the projected year, and — worse — a day-of-week entirely absent from the
- * sample (e.g. a 2-day sample covering only a Tuesday and Wednesday) would project as exactly
- * zero kWh for every TOU band scheduled on it, silently mis-ranking a plan whose cheap band falls
- * on an unsampled day. Per-day-of-week scaling fixes the representable case (uneven but non-zero
- * coverage); a day-of-week with zero samples has no key in `week` at all and stays absent here
- * too — no scaling factor can manufacture data that was never measured. Callers must disclose
- * that gap explicitly (see `missingDaysOfWeek`) rather than let a silent zero read as measured.
+ * day-of-week's factor is `expectedByDow[day] / daysByDow[day]` (its own actual sample size, from
+ * `aggregateGeneralWeek`, against its own real calendar expectation, from `expectedDaysByDow`),
+ * not one blanket factor applied to the whole map. A single global factor (raw total scaled by
+ * `ANNUAL_DAYS / sampledDays`) silently mis-weights any sample that isn't an exact multiple of 7
+ * days: a day-of-week sampled fewer times than others would be under-represented in the projected
+ * year, and — worse — a day-of-week entirely absent from the sample (e.g. a 2-day sample covering
+ * only a Tuesday and Wednesday) would project as exactly zero kWh for every TOU band scheduled on
+ * it, silently mis-ranking a plan whose cheap band falls on an unsampled day. Per-day-of-week
+ * scaling fixes the representable case (uneven but non-zero coverage); a day-of-week with zero
+ * samples has no key in `week` at all and stays absent here too — no scaling factor can manufacture
+ * data that was never measured. Callers must disclose that gap explicitly (see `missingDaysOfWeek`)
+ * rather than let a silent zero read as measured.
+ *
+ * `expectedByDow` must come from `expectedDaysByDow`, not a constant fraction — see that function's
+ * doc comment for why a fractional per-day expectation silently over-scales a gapless full year.
  */
 export function scaleGeneralWeek(
   week: Map<string, number>,
   daysByDow: Record<TouDay, number>,
+  expectedByDow: Record<TouDay, number>,
 ): Map<string, number> {
   const scaled = new Map<string, number>();
   for (const [key, kwh] of week) {
     const { day } = parseWeekSlotKey(key);
-    scaled.set(key, kwh * coverageFactor(daysByDow[day], DOW_ANNUAL_OCCURRENCES));
+    scaled.set(key, kwh * coverageFactor(daysByDow[day], expectedByDow[day]));
   }
   return scaled;
 }
