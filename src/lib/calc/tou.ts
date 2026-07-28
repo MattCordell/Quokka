@@ -1,6 +1,6 @@
 import type { NmiData } from '../nem12';
 import type { RegisterMapping } from '../mapping/types';
-import type { TouPlan, TouDay } from '../plan/types';
+import { TOU_DAYS, type TouPlan, type TouDay } from '../plan/types';
 import { formatTime, parseTime, slotInBand } from '../plan/coverage';
 import { CalcError, type Bill, type BandCharge, type CategoryUsage, type Period } from './types';
 import { daysInPeriod, dayInPeriod, dayOfWeek } from './period';
@@ -65,10 +65,45 @@ export function aggregateGeneralWeek(
 }
 
 /**
+ * Distinct in-period dates with a General reading, bucketed by day-of-week (deduped across
+ * General registers, mirroring `aggregateGeneralWeek`'s own dedup). This is the actual sample
+ * size behind each day-of-week's slice of `aggregateGeneralWeek`'s output — annual extrapolation
+ * (ADR-0006, `scaleGeneralWeek`) needs it per-day-of-week rather than as one combined day count,
+ * because a short or unevenly-distributed sample doesn't represent every weekday/weekend day
+ * equally (e.g. a 2-day sample covering only a Tuesday and a Wednesday has zero data for the
+ * other five days of the week — no scaling factor can manufacture what was never measured).
+ */
+export function countGeneralDaysByDow(
+  usage: NmiData,
+  mapping: RegisterMapping,
+  period: Period,
+): Record<TouDay, number> {
+  const datesByDow = Object.fromEntries(TOU_DAYS.map((day) => [day, new Set<string>()])) as Record<
+    TouDay,
+    Set<string>
+  >;
+
+  for (const register of usage.registers) {
+    if (mapping.registers[register.registerId] !== 'General') continue;
+    for (const day of register.days) {
+      if (!dayInPeriod(day.date, period)) continue;
+      datesByDow[dayOfWeek(day.date)].add(day.date);
+    }
+  }
+
+  return Object.fromEntries(TOU_DAYS.map((day) => [day, datesByDow[day].size])) as Record<
+    TouDay,
+    number
+  >;
+}
+
+/**
  * Prices a TOU Plan against an already-aggregated CategoryUsage + weekly General profile.
  * Each (day, minute) slot is assigned to the single band whose days include that day-of-week
  * and whose half-open [start,end) contains that minute (ADR-0001) — the same slotInBand test
  * coverage validation uses, so a plan that passed Band Coverage has no unassigned slot here.
+ *
+ * `extrapolation` is opaque passthrough metadata (ADR-0006), same contract as `priceFlatBill`'s.
  */
 export function priceTouBill(
   plan: TouPlan,
@@ -76,6 +111,7 @@ export function priceTouBill(
   generalWeek: Map<string, number>,
   days: number,
   period: Period,
+  extrapolation: Bill['extrapolation'] = null,
 ): Bill {
   const { supplyCents, cl1Applicable, cl1Cents, cl2Applicable, cl2Cents, solarCreditCents } =
     priceSupplyClSolar(plan, agg, days);
@@ -140,6 +176,7 @@ export function priceTouBill(
     discountLines: discounts.lines,
     hasNonActualReads: agg.hasNonActualReads,
     nonActualDayCount: agg.nonActualDayCount,
+    extrapolation,
   };
 }
 

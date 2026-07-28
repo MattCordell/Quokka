@@ -12,12 +12,18 @@ import { priceDiscounts } from './discount';
  * depend on the plan's rates, so a caller pricing several plans over the same usage/mapping/
  * period (e.g. Compare's plan list) should aggregate once and call this per plan, rather than
  * re-aggregating per plan via computeFlatBill.
+ *
+ * `extrapolation` is opaque passthrough metadata (ADR-0006): the caller decides whether `agg` was
+ * annually extrapolated and supplies the descriptor; this function's own math is unaffected
+ * either way — there's still exactly one pricing path, `agg`/`days` already carry whatever
+ * scaling was applied, and this is only ever attached to the returned `Bill` so it can't be lost.
  */
 export function priceFlatBill(
   plan: FlatPlan,
   agg: CategoryUsage,
   days: number,
   period: Period,
+  extrapolation: Bill['extrapolation'] = null,
 ): Bill {
   const { supplyCents, cl1Applicable, cl1Cents, cl2Applicable, cl2Cents, solarCreditCents } =
     priceSupplyClSolar(plan, agg, days);
@@ -49,6 +55,7 @@ export function priceFlatBill(
     discountLines: discounts.lines,
     hasNonActualReads: agg.hasNonActualReads,
     nonActualDayCount: agg.nonActualDayCount,
+    extrapolation,
   };
 }
 

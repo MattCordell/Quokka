@@ -3,17 +3,22 @@
   import {
     aggregateUsage,
     aggregateGeneralWeek,
+    countGeneralDaysByDow,
     daysInPeriod,
     priceFlatBill,
     priceTouBill,
     compactToIso,
     CalcError,
     resolveLastQuarter,
-    resolveAnnual,
+    quarterMonthPeriods,
+    resolveAnnualPeriod,
     scaleCategoryUsage,
     scaleGeneralWeek,
+    describeExtrapolation,
+    missingDaysOfWeek,
     ANNUAL_DAYS,
   } from '../lib/calc';
+  import { USAGE_CATEGORIES } from '../lib/mapping/types';
   import { validateBandCoverage } from '../lib/plan/coverage';
   import type { FlatPlan, TouPlan } from '../lib/plan/types';
   import { formatCents } from '../lib/format';
@@ -80,8 +85,24 @@
     return { start: compactToIso(usage.firstDate), end: compactToIso(usage.lastDate) };
   });
 
-  let lastQuarterPeriod = $derived(dataSpan ? resolveLastQuarter(dataSpan) : null);
-  let annualWindow = $derived(dataSpan ? resolveAnnual(dataSpan) : null);
+  // resolveLastQuarter only checks that the quarter's calendar bounds fit inside the data span's
+  // endpoints (ADR-0009) — it can't see whether the data actually has readings throughout, so a
+  // file with e.g. Jan-Mar and Jul readings but nothing between could otherwise resolve a quarter
+  // with an empty middle month. daysWithData is 0 for any category with no mapped register (by
+  // construction), so checking "some category has any day of data" per month, with no extra
+  // per-category filtering needed, catches an entirely-empty month and disables the preset.
+  let lastQuarterCandidate = $derived(dataSpan ? resolveLastQuarter(dataSpan) : null);
+  let lastQuarterPeriod = $derived.by(() => {
+    if (!lastQuarterCandidate || !usage || !mapping) return null;
+    const monthsHaveData = quarterMonthPeriods(lastQuarterCandidate).every((month) =>
+      Object.values(aggregateUsage(usage, mapping, month).daysWithData).some((n) => n > 0),
+    );
+    return monthsHaveData ? lastQuarterCandidate : null;
+  });
+
+  // resolveAnnualPeriod only resolves the calendar window (ADR-0006); how much of it is
+  // extrapolated is decided per-category from the real aggregation below (periodAgg), not here.
+  let annualCandidate = $derived(dataSpan ? resolveAnnualPeriod(dataSpan) : null);
 
   // Custom resets to the full span (null overrides); the two presets snap the date inputs to
   // their resolved range. Editing a date input directly (onchange below) flips back to 'custom'
@@ -94,9 +115,9 @@
     } else if (mode === 'lastQuarter' && lastQuarterPeriod) {
       startOverride = lastQuarterPeriod.start;
       endOverride = lastQuarterPeriod.end;
-    } else if (mode === 'annual' && annualWindow) {
-      startOverride = annualWindow.period.start;
-      endOverride = annualWindow.period.end;
+    } else if (mode === 'annual' && annualCandidate) {
+      startOverride = annualCandidate.start;
+      endOverride = annualCandidate.end;
     }
   }
 
@@ -105,27 +126,25 @@
   // unclamped override would inflate daysInPeriod (and so the supply charge) past what usage
   // data actually backs.
   let period = $derived.by(() => {
-    if (!usage) return null;
-    const min = compactToIso(usage.firstDate);
-    const max = compactToIso(usage.lastDate);
+    if (!dataSpan) return null;
     return {
-      start: clamp(startOverride ?? min, min, max),
-      end: clamp(endOverride ?? max, min, max),
+      start: clamp(startOverride ?? dataSpan.start, dataSpan.start, dataSpan.end),
+      end: clamp(endOverride ?? dataSpan.end, dataSpan.start, dataSpan.end),
     };
   });
 
   let periodValid = $derived(!!period && period.start <= period.end);
 
-  // Whether the annual scaling factor actually applies to the period in force. Gated on the
-  // resolved annual window's dates still matching `period` (not just periodMode === 'annual')
-  // so a manual date edit — which flips periodMode to 'custom' but could in principle land back
-  // on the same range — can never apply a stale factor to numbers it no longer describes.
+  // Whether the annual candidate window is the period in force. Gated on the resolved candidate's
+  // dates still matching `period` (not just periodMode === 'annual') so a manual date edit — which
+  // flips periodMode to 'custom' but could in principle land back on the same range — can never
+  // apply extrapolation to numbers it no longer describes.
   let annualActive = $derived(
     periodMode === 'annual' &&
       !!period &&
-      !!annualWindow &&
-      period.start === annualWindow.period.start &&
-      period.end === annualWindow.period.end,
+      !!annualCandidate &&
+      period.start === annualCandidate.start &&
+      period.end === annualCandidate.end,
   );
 
   // aggregateUsage/aggregateGeneralWeek depend only on usage/mapping/period, not on any plan's
@@ -136,8 +155,10 @@
   // doesn't divide the 30-min TOU coverage grid (e.g. an 18-min meter) — caught here rather than
   // taking down the whole screen for a flat-only user with such a meter.
   //
-  // Annual extrapolation (ADR-0006) scales these same aggregated inputs by the resolved factor
-  // rather than adding a second pricing path — priceFlatBill/priceTouBill below are unchanged.
+  // Annual extrapolation (ADR-0006) scales these same aggregated inputs — per category
+  // (scaleCategoryUsage) and per day-of-week (scaleGeneralWeek) from their own real coverage,
+  // never one blanket factor — rather than adding a second pricing path; priceFlatBill/
+  // priceTouBill below are unchanged.
   let periodAgg = $derived.by(() => {
     if (!usage || !mapping || !period || !periodValid) return null;
     let generalWeek: Map<string, number>;
@@ -151,17 +172,33 @@
     }
     const agg = aggregateUsage(usage, mapping, period);
     const sampledDays = daysInPeriod(period);
-    const factor = annualActive ? (annualWindow?.factor ?? 1) : 1;
+    const extrapolation = annualActive ? describeExtrapolation(agg) : null;
+    // A day-of-week with zero General samples can't be scaled into existence (scaleGeneralWeek's
+    // own doc comment) — computed once here so both the scaling and the disclosure below share it.
+    const generalDaysByDow =
+      annualActive && !generalWeekError ? countGeneralDaysByDow(usage, mapping, period) : null;
 
     return {
       period,
       days: annualActive ? ANNUAL_DAYS : sampledDays,
       sampledDays,
-      agg: factor !== 1 ? scaleCategoryUsage(agg, factor) : agg,
-      generalWeek:
-        factor !== 1 && !generalWeekError ? scaleGeneralWeek(generalWeek, factor) : generalWeek,
+      agg: annualActive ? scaleCategoryUsage(agg) : agg,
+      generalWeek: generalDaysByDow ? scaleGeneralWeek(generalWeek, generalDaysByDow) : generalWeek,
       generalWeekError,
+      extrapolation,
+      missingDows: generalDaysByDow ? missingDaysOfWeek(generalDaysByDow) : [],
     };
+  });
+
+  // Per-category data-coverage shortfalls within the period in force (kept per-category, not
+  // unioned, so a fully-covered register — e.g. solar Generation — can't mask a gap in a
+  // different mapped category, like a General meter swap, that happens to share the period).
+  let coverageGaps = $derived.by(() => {
+    if (!periodAgg) return [];
+    const { agg, sampledDays } = periodAgg;
+    return USAGE_CATEGORIES.filter(
+      (category) => agg.mappedCategories[category] && agg.daysWithData[category] < sampledDays,
+    ).map((category) => ({ category, daysWithData: agg.daysWithData[category] }));
   });
 
   // Pricing a TOU plan against an empty generalWeek (the generalWeekError case) would silently
@@ -170,13 +207,16 @@
   // ones with invalid Band Coverage.
   let rows = $derived.by(() => {
     if (!periodAgg) return [];
-    const { period: p, days, agg, generalWeek, generalWeekError } = periodAgg;
-    const flatRows = flatPlans.map((plan) => ({ plan, bill: priceFlatBill(plan, agg, days, p) }));
+    const { period: p, days, agg, generalWeek, generalWeekError, extrapolation } = periodAgg;
+    const flatRows = flatPlans.map((plan) => ({
+      plan,
+      bill: priceFlatBill(plan, agg, days, p, extrapolation),
+    }));
     const touRows = generalWeekError
       ? []
       : priceableTouPlans.map((plan) => ({
           plan,
-          bill: priceTouBill(plan, agg, generalWeek, days, p),
+          bill: priceTouBill(plan, agg, generalWeek, days, p, extrapolation),
         }));
     return [...flatRows, ...touRows];
   });
@@ -299,8 +339,8 @@
             Start
             <input
               type="date"
-              min={compactToIso(usage.firstDate)}
-              max={compactToIso(usage.lastDate)}
+              min={dataSpan?.start}
+              max={dataSpan?.end}
               value={period.start}
               onchange={(e) => {
                 startOverride = e.currentTarget.value || null;
@@ -312,8 +352,8 @@
             End
             <input
               type="date"
-              min={compactToIso(usage.firstDate)}
-              max={compactToIso(usage.lastDate)}
+              min={dataSpan?.start}
+              max={dataSpan?.end}
               value={period.end}
               onchange={(e) => {
                 endOverride = e.currentTarget.value || null;
@@ -325,33 +365,41 @@
 
         {#if !periodValid}
           <p class="error" role="alert">The start date must not be after the end date.</p>
-        {:else}
+        {:else if periodAgg}
           <p class="note">
-            Billing {period.start} to {period.end} ({periodAgg?.days ?? 0} day{periodAgg?.days === 1
+            Billing {period.start} to {period.end} ({periodAgg.days} day{periodAgg.days === 1
               ? ''
               : 's'} for the supply charge).
           </p>
 
-          {#if annualActive && annualWindow?.extrapolated}
+          {#if periodAgg.extrapolation}
             <p class="banner" role="alert">
-              <strong>Estimated annual figure.</strong> Based on {annualWindow.sampledDays} day{annualWindow.sampledDays ===
-              1
-                ? ''
-                : 's'} of data ({dataSpan?.start} to {dataSpan?.end}), scaled x{annualWindow.factor.toFixed(
-                1,
-              )} to a 365-day year. This is an extrapolated estimate, not a measured annual bill, and
-              may be seasonally biased (e.g. a winter-only sample over-weights heating).
+              <strong>Estimated annual figure.</strong> Based on {periodAgg.extrapolation
+                .sampledDays}
+              day{periodAgg.extrapolation.sampledDays === 1 ? '' : 's'} of General data within {period.start}
+              to {period.end}, scaled x{periodAgg.extrapolation.factor.toFixed(1)} to a 365-day year.
+              This is an extrapolated estimate, not a measured annual bill — it may be seasonally biased
+              (e.g. a winter-only sample over-weights heating), or understated if the shortfall reflects
+              a data gap rather than a genuinely short history.
             </p>
           {/if}
 
-          {#if periodAgg && periodAgg.agg.daysWithData < periodAgg.sampledDays}
+          {#if periodAgg.missingDows.length > 0}
+            <p class="banner" role="alert">
+              No General data for {periodAgg.missingDows.join(', ')} in the sampled period — any time-of-use
+              band scheduled on {periodAgg.missingDows.length === 1 ? 'that day' : 'those days'} shows
+              as $0 in this estimate, not a true measured value.
+            </p>
+          {/if}
+
+          {#each coverageGaps as gap (gap.category)}
             <p class="note" role="alert">
-              {periodAgg.sampledDays - periodAgg.agg.daysWithData} of {periodAgg.sampledDays} days in
-              this period have no data — totals (and the annual estimate) are understated by that shortfall.
+              {gap.category}: {periodAgg.sampledDays - gap.daysWithData} of {periodAgg.sampledDays} days
+              in this period have no data — totals (and any annual estimate) are understated by that shortfall.
             </p>
-          {/if}
+          {/each}
 
-          <NonActualReadsBadge days={periodAgg?.agg.nonActualDayCount ?? 0} />
+          <NonActualReadsBadge days={periodAgg.agg.nonActualDayCount} />
 
           {#if invalidTouPlans.length > 0}
             <p role="alert">
@@ -360,7 +408,7 @@
               Fix on the Plans tab: {invalidTouPlans.map((p) => p.name).join(', ')}.
             </p>
           {/if}
-          {#if periodAgg?.generalWeekError}
+          {#if periodAgg.generalWeekError}
             <p role="alert">
               Time-of-use plans can't be priced for this property's data: {periodAgg.generalWeekError}
             </p>
@@ -413,7 +461,7 @@
                     <span class="rank">#{rank}</span>
                     {plan.name} <span class="retailer">({plan.retailer})</span>
                     {#if isCheapest}<span class="cheapest-tag">Cheapest</span>{/if}
-                    {#if annualActive && annualWindow?.extrapolated}
+                    {#if bill.extrapolation}
                       <span class="estimated-tag">Estimated</span>
                     {/if}
                   </h3>
@@ -509,13 +557,15 @@
           </fieldset>
 
           {#if shapeView === 'hourOfDay'}
-            {#if periodAgg?.generalWeekError}
+            {#if periodAgg.generalWeekError}
               <p class="note">Usage shape chart unavailable: {periodAgg.generalWeekError}</p>
             {:else}
               <UsageShapeChart
                 data={hourOfDayData}
                 format={(v) => `${v.toFixed(1)} kWh`}
-                valueLabel="General kWh"
+                valueLabel={periodAgg.extrapolation
+                  ? 'General kWh (estimated annual)'
+                  : 'General kWh'}
                 categoryLabel="Hour of day"
                 tickEvery={3}
               />
@@ -623,19 +673,24 @@
     font-weight: normal;
   }
 
-  .cheapest-tag {
+  .cheapest-tag,
+  .estimated-tag {
     font-weight: 600;
     font-size: 0.8rem;
     text-transform: uppercase;
     letter-spacing: 0.03em;
   }
 
+  /* Translucent border + background over `color: inherit`, matching NonActualReadsBadge.svelte's
+     and .banner's technique — composites correctly under `color-scheme: light dark` with no
+     prefers-color-scheme block, unlike a hardcoded text color which can drop below WCAG AA
+     contrast against a dark-mode card background. */
   .estimated-tag {
-    font-weight: 600;
-    font-size: 0.8rem;
-    text-transform: uppercase;
-    letter-spacing: 0.03em;
-    color: #b36b00;
+    color: inherit;
+    background: #f5a62333;
+    border: 1px solid #f5a62388;
+    border-radius: 0.25rem;
+    padding: 0.05rem 0.4rem;
   }
 
   .retailer {

@@ -53,7 +53,13 @@ export function manualCategoryUsage(input: ManualBillInput): CategoryUsage {
     },
     hasNonActualReads: false,
     nonActualDayCount: 0,
-    daysWithData: daysInPeriod(input.period),
+    daysWithData: {
+      General: daysInPeriod(input.period),
+      CL1: daysInPeriod(input.period),
+      CL2: daysInPeriod(input.period),
+      Generation: daysInPeriod(input.period),
+      Ignore: 0,
+    },
   };
 }
 

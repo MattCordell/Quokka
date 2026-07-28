@@ -18,9 +18,20 @@ export function dayInPeriod(compactDate: string, period: Period): boolean {
   return compactDate >= start && compactDate <= end;
 }
 
-function toUtcMs(iso: string): number {
+export function toUtcMs(iso: string): number {
   const [year, month, day] = iso.split('-').map(Number);
   return Date.UTC(year, month - 1, day);
+}
+
+/** "2025-07-01" style zero-padded ISO date from year/1-based month/day components. */
+export function formatIso(year: number, month: number, day: number): string {
+  return `${String(year).padStart(4, '0')}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+}
+
+/** The inverse of toUtcMs: an epoch-ms UTC instant back to its ISO calendar date. */
+export function isoFromUtcMs(ms: number): string {
+  const d = new Date(ms);
+  return formatIso(d.getUTCFullYear(), d.getUTCMonth() + 1, d.getUTCDate());
 }
 
 /**

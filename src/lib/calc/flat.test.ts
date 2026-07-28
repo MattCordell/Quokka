@@ -306,4 +306,16 @@ describe('priceFlatBill', () => {
     expect(bills[0].generalUsageCents).toBe(20); // 2 kWh * 10c
     expect(bills[1].generalUsageCents).toBe(100); // 2 kWh * 50c
   });
+
+  it('extrapolation defaults to null and is carried through unchanged when supplied', () => {
+    const usage = nmiData([register({ registerId: 'E1' })]);
+    const mapping: RegisterMapping = { nmi: '6407000000', registers: { E1: 'General' } };
+    const agg = aggregateUsage(usage, mapping, period);
+    const plan = flatPlan();
+
+    expect(priceFlatBill(plan, agg, 2, period).extrapolation).toBeNull();
+
+    const extrapolation = { factor: 182.5, sampledDays: 2 };
+    expect(priceFlatBill(plan, agg, 2, period, extrapolation).extrapolation).toEqual(extrapolation);
+  });
 });

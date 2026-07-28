@@ -24,9 +24,11 @@ function emptyRecord<T>(value: T): Record<UsageCategory, T> {
  * cross-register (a `Set<string>` of `day.date`): the same calendar day can appear on more than
  * one mapped register (e.g. General + Generation + CL1), and must still count once.
  *
- * `daysWithData` dedupes the same way, over the same mapped/non-Ignore registers, but counts a
- * day present at all (any quality flag) rather than a non-'A' one — a coverage count, not a
- * quality count, for disclosing gaps where a register has no reading whatsoever for a day.
+ * `daysWithData` counts, **per category**, distinct in-period days present at all (any quality
+ * flag) on that category's own mapped registers — a coverage count, not a quality count, kept
+ * per-category rather than unioned across categories so a fully-covered register (e.g. solar
+ * Generation) can never mask a gap in a different category (e.g. a General meter swap) that
+ * happens to share the same period.
  */
 export function aggregateUsage(
   usage: NmiData,
@@ -37,7 +39,9 @@ export function aggregateUsage(
   const mappedCategories = emptyRecord(false);
   let hasNonActualReads = false;
   const nonActualDays = new Set<string>();
-  const daysWithData = new Set<string>();
+  const daysWithDataByCategory = Object.fromEntries(
+    USAGE_CATEGORIES.map((category) => [category, new Set<string>()]),
+  ) as Record<UsageCategory, Set<string>>;
 
   for (const register of usage.registers) {
     const category = mapping.registers[register.registerId];
@@ -47,7 +51,7 @@ export function aggregateUsage(
 
     for (const day of register.days) {
       if (!dayInPeriod(day.date, period)) continue;
-      daysWithData.add(day.date);
+      daysWithDataByCategory[category].add(day.date);
 
       for (let i = 0; i < day.values.length; i++) {
         const quality = day.quality[i];
@@ -65,6 +69,8 @@ export function aggregateUsage(
     mappedCategories,
     hasNonActualReads,
     nonActualDayCount: nonActualDays.size,
-    daysWithData: daysWithData.size,
+    daysWithData: Object.fromEntries(
+      USAGE_CATEGORIES.map((category) => [category, daysWithDataByCategory[category].size]),
+    ) as Record<UsageCategory, number>,
   };
 }
