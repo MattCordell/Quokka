@@ -143,9 +143,7 @@ describe('aggregateUsage', () => {
 
 describe('aggregateUsage nonActualDayCount', () => {
   it('counts a single non-actual day', () => {
-    const usage = nmiData([
-      register({ registerId: 'E1', days: [day({ quality: ['A', 'N'] })] }),
-    ]);
+    const usage = nmiData([register({ registerId: 'E1', days: [day({ quality: ['A', 'N'] })] })]);
     const mapping: RegisterMapping = { nmi: '6407000000', registers: { E1: 'General' } };
 
     expect(aggregateUsage(usage, mapping, period).nonActualDayCount).toBe(1);

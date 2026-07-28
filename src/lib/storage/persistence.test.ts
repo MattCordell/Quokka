@@ -208,9 +208,7 @@ describe('persistence', () => {
   it('drops a plan with a discount percent out of range (e.g. 150) instead of a malformed bill', () => {
     const badPercent = {
       ...plan('plan-bad-percent'),
-      discounts: [
-        { id: 'd1', label: '', kind: 'guaranteed', percent: 150, components: ['usage'] },
-      ],
+      discounts: [{ id: 'd1', label: '', kind: 'guaranteed', percent: 150, components: ['usage'] }],
     };
     storage.setItem(
       'quokka:plans',

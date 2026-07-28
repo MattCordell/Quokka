@@ -18,7 +18,10 @@ function plan(id: string, name: string): FlatPlan {
   };
 }
 
-function bill(guaranteedTotalCents: number, bestCaseTotalCents: number = guaranteedTotalCents): Bill {
+function bill(
+  guaranteedTotalCents: number,
+  bestCaseTotalCents: number = guaranteedTotalCents,
+): Bill {
   return {
     planId: 'x',
     period: { start: '2025-07-01', end: '2025-07-01' },

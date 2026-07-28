@@ -86,7 +86,10 @@ describe('isValidPlan', () => {
 
   it('accepts a well-formed discounts list', () => {
     expect(
-      isValidPlan({ ...validFlatPlan(), discounts: [validDiscount(), { ...validDiscount(), id: 'disc-b', kind: 'conditional' }] }),
+      isValidPlan({
+        ...validFlatPlan(),
+        discounts: [validDiscount(), { ...validDiscount(), id: 'disc-b', kind: 'conditional' }],
+      }),
     ).toBe(true);
   });
 

@@ -23,17 +23,21 @@
   let xTicks = $derived(data.filter((_, i) => i % tickEvery === 0).map((d) => d.label));
 </script>
 
-<figure class="chart" role="img" aria-label={summary}>
-  <BarChart
-    {data}
-    x="label"
-    y="value"
-    {height}
-    props={{
-      xAxis: { ticks: xTicks },
-      yAxis: { format },
-    }}
-  />
+<figure class="chart">
+  <!-- role="img" flattens its subtree from the a11y tree, so it wraps only the visual chart —
+       the sr-only fallback table below stays a sibling, reachable by assistive tech. -->
+  <div role="img" aria-label={summary}>
+    <BarChart
+      {data}
+      x="label"
+      y="value"
+      {height}
+      props={{
+        xAxis: { ticks: xTicks },
+        yAxis: { format },
+      }}
+    />
+  </div>
   <table class="sr-only">
     <caption>{summary}</caption>
     <thead>
@@ -43,7 +47,7 @@
       </tr>
     </thead>
     <tbody>
-      {#each data as d (d.label)}
+      {#each data as d, i (i)}
         <tr>
           <td>{d.label}</td>
           <td>{format(d.value)}</td>

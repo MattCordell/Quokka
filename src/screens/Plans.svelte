@@ -177,7 +177,10 @@
   function describeDiscounts(plan: Plan): string {
     if (plan.discounts.length === 0) return 'None';
     return plan.discounts
-      .map((d) => `${d.label || (d.kind === 'guaranteed' ? 'Guaranteed' : 'Conditional')} ${d.percent}%`)
+      .map(
+        (d) =>
+          `${d.label || (d.kind === 'guaranteed' ? 'Guaranteed' : 'Conditional')} ${d.percent}%`,
+      )
       .join(', ');
   }
 
@@ -294,7 +297,14 @@
           </fieldset>
           <label>
             Percent (%)
-            <input type="number" min="0" max="100" step="0.01" bind:value={discount.percent} required />
+            <input
+              type="number"
+              min="0"
+              max="100"
+              step="0.01"
+              bind:value={discount.percent}
+              required
+            />
           </label>
           <fieldset class="components">
             <legend>Applies to</legend>
@@ -306,7 +316,9 @@
             {/each}
           </fieldset>
           {#if discountErrors[i]}
-            <p class="error" role="alert">Select at least one component this discount applies to.</p>
+            <p class="error" role="alert">
+              Select at least one component this discount applies to.
+            </p>
           {/if}
           <button type="button" onclick={() => removeDiscount(i)}>Remove discount</button>
         </fieldset>
@@ -321,8 +333,8 @@
       {/if}
 
       <p class="note">
-        A guaranteed discount always applies; a conditional discount (e.g. pay-on-time) only
-        applies to the best-case total (ADR-0007).
+        A guaranteed discount always applies; a conditional discount (e.g. pay-on-time) only applies
+        to the best-case total (ADR-0007).
       </p>
     </fieldset>
 

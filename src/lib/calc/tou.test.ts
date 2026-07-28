@@ -240,9 +240,7 @@ describe('priceTouBill / computeTouBill', () => {
       registers: { E1: 'General', E3: 'CL1' },
     };
     const plan = touPlan([PEAK, OFFPEAK_WEEKDAY], {
-      discounts: [
-        { id: 'd', label: '', kind: 'guaranteed', percent: 10, components: ['usage'] },
-      ],
+      discounts: [{ id: 'd', label: '', kind: 'guaranteed', percent: 10, components: ['usage'] }],
     });
 
     const bill = computeTouBill(plan, usage, mapping, period);

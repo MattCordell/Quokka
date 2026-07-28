@@ -238,15 +238,15 @@
           {#if !cl1Applicable}
             <p class="note">
               CL1: not applicable (no controlled-load circuit). Any controlled-load rate on these
-              plans contributed $0 to every total, because no register is mapped to that circuit
-              for this property. Change this on the Usage data tab.
+              plans contributed $0 to every total, because no register is mapped to that circuit for
+              this property. Change this on the Usage data tab.
             </p>
           {/if}
           {#if !cl2Applicable}
             <p class="note">
               CL2: not applicable (no controlled-load circuit). Any controlled-load rate on these
-              plans contributed $0 to every total, because no register is mapped to that circuit
-              for this property. Change this on the Usage data tab.
+              plans contributed $0 to every total, because no register is mapped to that circuit for
+              this property. Change this on the Usage data tab.
             </p>
           {/if}
 
@@ -292,7 +292,7 @@
                     {#if bill.bands}
                       <dd class="sub-wrap">
                         <ul class="sub">
-                          {#each bill.bands as band (band.label)}
+                          {#each bill.bands as band, i (i)}
                             <li>{band.label}: {formatCents(band.cents)}</li>
                           {/each}
                         </ul>
@@ -324,9 +324,10 @@
                     {#if bill.discountLines.length > 0}
                       <dd class="sub-wrap">
                         <ul class="sub">
-                          {#each bill.discountLines as line (line.discountId)}
+                          {#each bill.discountLines as line, i (i)}
                             <li>
-                              {line.label || (line.kind === 'guaranteed' ? 'Guaranteed' : 'Conditional')}
+                              {line.label ||
+                                (line.kind === 'guaranteed' ? 'Guaranteed' : 'Conditional')}
                               ({line.kind}): {formatCents(-line.cents)}
                             </li>
                           {/each}
@@ -380,7 +381,7 @@
               <UsageShapeChart
                 data={hourOfDayData}
                 format={(v) => `${v.toFixed(1)} kWh`}
-                valueLabel="kWh"
+                valueLabel="General kWh"
                 categoryLabel="Hour of day"
                 tickEvery={3}
               />
@@ -388,7 +389,10 @@
           {:else if touRows.length > 0}
             <label>
               TOU plan
-              <select bind:value={selectedTouPlanId}>
+              <select
+                value={effectiveTouPlanId}
+                onchange={(e) => (selectedTouPlanId = e.currentTarget.value)}
+              >
                 {#each touRows as { plan } (plan.id)}
                   <option value={plan.id}>{plan.name}</option>
                 {/each}
@@ -400,6 +404,13 @@
               valueLabel="% of general usage"
               categoryLabel="TOU band"
             />
+          {:else}
+            <!-- A disabled radio doesn't reset shapeView on its own — e.g. narrowing the period
+                 or switching property can drop touRows to zero while 'band' is still selected. -->
+            <p class="note">
+              No priceable time-of-use plan is available to show band share for this property and
+              period.
+            </p>
           {/if}
         {/if}
       {/if}

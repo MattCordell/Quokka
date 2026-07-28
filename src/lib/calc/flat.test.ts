@@ -213,9 +213,7 @@ describe('computeFlatBill discounts', () => {
     const plan = flatPlan({
       supply: { generalCentsPerDay: 10, cl1CentsPerDay: 0, cl2CentsPerDay: 0 },
       feedInRateCentsPerKwh: 100,
-      discounts: [
-        { id: 'd1', label: '', kind: 'guaranteed', percent: 10, components: ['supply'] },
-      ],
+      discounts: [{ id: 'd1', label: '', kind: 'guaranteed', percent: 10, components: ['supply'] }],
     });
 
     const bill = computeFlatBill(plan, usage, mapping, period);
@@ -261,14 +259,10 @@ describe('computeFlatBill discounts', () => {
     const usage = nmiData([register({ registerId: 'E1', days: [day({ values: [10, 10] })] })]);
     const mapping: RegisterMapping = { nmi: '6407000000', registers: { E1: 'General' } };
     const smaller = flatPlan({
-      discounts: [
-        { id: 'd', label: '', kind: 'guaranteed', percent: 5, components: ['usage'] },
-      ],
+      discounts: [{ id: 'd', label: '', kind: 'guaranteed', percent: 5, components: ['usage'] }],
     });
     const larger = flatPlan({
-      discounts: [
-        { id: 'd', label: '', kind: 'guaranteed', percent: 20, components: ['usage'] },
-      ],
+      discounts: [{ id: 'd', label: '', kind: 'guaranteed', percent: 20, components: ['usage'] }],
     });
 
     const smallerBill = computeFlatBill(smaller, usage, mapping, period);
