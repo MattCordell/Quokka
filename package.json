@@ -27,7 +27,7 @@
     "@tsconfig/svelte": "^5.0.8",
     "@types/d3-scale": "^4.0.9",
     "@types/node": "^26.1.1",
-    "eslint": "^9.0.0",
+    "eslint": "^10.8.0",
     "eslint-config-prettier": "^10.1.8",
     "eslint-plugin-svelte": "^3.0.0",
     "globals": "^17.8.0",
