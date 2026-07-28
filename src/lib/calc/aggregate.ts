@@ -23,6 +23,10 @@ function emptyRecord<T>(value: T): Record<UsageCategory, T> {
  * export day distorts the solar credit the same way a General estimate distorts usage. Dedup is
  * cross-register (a `Set<string>` of `day.date`): the same calendar day can appear on more than
  * one mapped register (e.g. General + Generation + CL1), and must still count once.
+ *
+ * `daysWithData` dedupes the same way, over the same mapped/non-Ignore registers, but counts a
+ * day present at all (any quality flag) rather than a non-'A' one — a coverage count, not a
+ * quality count, for disclosing gaps where a register has no reading whatsoever for a day.
  */
 export function aggregateUsage(
   usage: NmiData,
@@ -33,6 +37,7 @@ export function aggregateUsage(
   const mappedCategories = emptyRecord(false);
   let hasNonActualReads = false;
   const nonActualDays = new Set<string>();
+  const daysWithData = new Set<string>();
 
   for (const register of usage.registers) {
     const category = mapping.registers[register.registerId];
@@ -42,6 +47,7 @@ export function aggregateUsage(
 
     for (const day of register.days) {
       if (!dayInPeriod(day.date, period)) continue;
+      daysWithData.add(day.date);
 
       for (let i = 0; i < day.values.length; i++) {
         const quality = day.quality[i];
@@ -59,5 +65,6 @@ export function aggregateUsage(
     mappedCategories,
     hasNonActualReads,
     nonActualDayCount: nonActualDays.size,
+    daysWithData: daysWithData.size,
   };
 }

@@ -249,3 +249,55 @@ describe('aggregateUsage nonActualDayCount', () => {
     expect(result.nonActualDayCount).toBe(1);
   });
 });
+
+describe('aggregateUsage daysWithData', () => {
+  it('dedupes the same date present across three registers (E1, B1, E3)', () => {
+    const usage = nmiData([
+      register({ registerId: 'E1', days: [day({ date: '20250701' })] }),
+      register({ registerId: 'B1', nmiSuffix: 'B1', days: [day({ date: '20250701' })] }),
+      register({ registerId: 'E3', nmiSuffix: 'E3', days: [day({ date: '20250701' })] }),
+    ]);
+    const mapping: RegisterMapping = {
+      nmi: '6407000000',
+      registers: { E1: 'General', B1: 'Generation', E3: 'CL1' },
+    };
+
+    expect(aggregateUsage(usage, mapping, period).daysWithData).toBe(1);
+  });
+
+  it('excludes an out-of-period day from the count', () => {
+    const usage = nmiData([
+      register({
+        registerId: 'E1',
+        days: [day({ date: '20250701' }), day({ date: '20250705' })],
+      }),
+    ]);
+    const mapping: RegisterMapping = { nmi: '6407000000', registers: { E1: 'General' } };
+    const narrowPeriod = { start: '2025-07-01', end: '2025-07-01' };
+
+    expect(aggregateUsage(usage, mapping, narrowPeriod).daysWithData).toBe(1);
+  });
+
+  it('counts a mid-period gap short: a period spanning 3 days with data on only 2 counts 2', () => {
+    const usage = nmiData([
+      register({
+        registerId: 'E1',
+        days: [day({ date: '20250701' }), day({ date: '20250703' })],
+      }),
+    ]);
+    const mapping: RegisterMapping = { nmi: '6407000000', registers: { E1: 'General' } };
+    const gapPeriod = { start: '2025-07-01', end: '2025-07-03' };
+
+    expect(aggregateUsage(usage, mapping, gapPeriod).daysWithData).toBe(2);
+  });
+
+  it('does not count a day whose only data is on an Ignore or unmapped register', () => {
+    const usage = nmiData([register({ registerId: 'E1' })]);
+
+    const ignoredMapping: RegisterMapping = { nmi: '6407000000', registers: { E1: 'Ignore' } };
+    expect(aggregateUsage(usage, ignoredMapping, period).daysWithData).toBe(0);
+
+    const unmappedMapping: RegisterMapping = { nmi: '6407000000', registers: {} };
+    expect(aggregateUsage(usage, unmappedMapping, period).daysWithData).toBe(0);
+  });
+});

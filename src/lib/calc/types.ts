@@ -22,6 +22,13 @@ export interface CategoryUsage {
   /** Any counted interval (non-Ignore register, in period) resolved to a non-'A' flag. */
   hasNonActualReads: boolean;
   nonActualDayCount: number;
+  /**
+   * Distinct in-period days (deduped across mapped, non-Ignore registers) with any data at all,
+   * regardless of quality flag — a gap-coverage count, not a quality count. Compared against
+   * `daysInPeriod` to disclose a data shortfall (e.g. an annual extrapolation understating its
+   * true scale because part of the sampled span has no data).
+   */
+  daysWithData: number;
 }
 
 /** One TOU band's contribution to generalUsageCents. Full precision (ADR-0004). */

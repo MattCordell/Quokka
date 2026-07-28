@@ -8,6 +8,11 @@
     priceTouBill,
     compactToIso,
     CalcError,
+    resolveLastQuarter,
+    resolveAnnual,
+    scaleCategoryUsage,
+    scaleGeneralWeek,
+    ANNUAL_DAYS,
   } from '../lib/calc';
   import { validateBandCoverage } from '../lib/plan/coverage';
   import type { FlatPlan, TouPlan } from '../lib/plan/types';
@@ -42,6 +47,11 @@
   let startOverride = $state<string | null>(null);
   let endOverride = $state<string | null>(null);
 
+  // 'custom' means "whatever startOverride/endOverride hold" (the pre-existing behaviour);
+  // 'lastQuarter'/'annual' additionally drive those overrides from the resolved preset (see
+  // selectPeriodMode below), so the existing clamped `period` derivation needs no change.
+  let periodMode = $state<'custom' | 'lastQuarter' | 'annual'>('custom');
+
   let rankBasis = $state<RankBasis>('bestCase');
   let shapeView = $state<'hourOfDay' | 'band'>('hourOfDay');
   // Defaults to the best-ranked TOU plan; an explicit choice sticks as long as that plan is still
@@ -55,12 +65,39 @@
     void usage;
     startOverride = null;
     endOverride = null;
+    periodMode = 'custom';
   });
 
   function clamp(value: string, min: string, max: string): string {
     if (value < min) return min;
     if (value > max) return max;
     return value;
+  }
+
+  // The full data span (unclamped by any override) that the presets below resolve against.
+  let dataSpan = $derived.by(() => {
+    if (!usage) return null;
+    return { start: compactToIso(usage.firstDate), end: compactToIso(usage.lastDate) };
+  });
+
+  let lastQuarterPeriod = $derived(dataSpan ? resolveLastQuarter(dataSpan) : null);
+  let annualWindow = $derived(dataSpan ? resolveAnnual(dataSpan) : null);
+
+  // Custom resets to the full span (null overrides); the two presets snap the date inputs to
+  // their resolved range. Editing a date input directly (onchange below) flips back to 'custom'
+  // so a partial manual edit is never misread as a preset with a stale factor.
+  function selectPeriodMode(mode: 'custom' | 'lastQuarter' | 'annual') {
+    periodMode = mode;
+    if (mode === 'custom') {
+      startOverride = null;
+      endOverride = null;
+    } else if (mode === 'lastQuarter' && lastQuarterPeriod) {
+      startOverride = lastQuarterPeriod.start;
+      endOverride = lastQuarterPeriod.end;
+    } else if (mode === 'annual' && annualWindow) {
+      startOverride = annualWindow.period.start;
+      endOverride = annualWindow.period.end;
+    }
   }
 
   // Clamped to the actual data span regardless of what the override holds — the date inputs'
@@ -79,6 +116,18 @@
 
   let periodValid = $derived(!!period && period.start <= period.end);
 
+  // Whether the annual scaling factor actually applies to the period in force. Gated on the
+  // resolved annual window's dates still matching `period` (not just periodMode === 'annual')
+  // so a manual date edit — which flips periodMode to 'custom' but could in principle land back
+  // on the same range — can never apply a stale factor to numbers it no longer describes.
+  let annualActive = $derived(
+    periodMode === 'annual' &&
+      !!period &&
+      !!annualWindow &&
+      period.start === annualWindow.period.start &&
+      period.end === annualWindow.period.end,
+  );
+
   // aggregateUsage/aggregateGeneralWeek depend only on usage/mapping/period, not on any plan's
   // rates, so they're hoisted here and priced per plan below rather than re-aggregated inside a
   // per-plan call — O(data + plans) instead of O(data x plans). generalWeek is computed
@@ -86,6 +135,9 @@
   // but aggregateGeneralWeek throws CalcError for a General register whose interval length
   // doesn't divide the 30-min TOU coverage grid (e.g. an 18-min meter) — caught here rather than
   // taking down the whole screen for a flat-only user with such a meter.
+  //
+  // Annual extrapolation (ADR-0006) scales these same aggregated inputs by the resolved factor
+  // rather than adding a second pricing path — priceFlatBill/priceTouBill below are unchanged.
   let periodAgg = $derived.by(() => {
     if (!usage || !mapping || !period || !periodValid) return null;
     let generalWeek: Map<string, number>;
@@ -97,11 +149,17 @@
       generalWeek = new Map();
       generalWeekError = e.message;
     }
+    const agg = aggregateUsage(usage, mapping, period);
+    const sampledDays = daysInPeriod(period);
+    const factor = annualActive ? (annualWindow?.factor ?? 1) : 1;
+
     return {
       period,
-      days: daysInPeriod(period),
-      agg: aggregateUsage(usage, mapping, period),
-      generalWeek,
+      days: annualActive ? ANNUAL_DAYS : sampledDays,
+      sampledDays,
+      agg: factor !== 1 ? scaleCategoryUsage(agg, factor) : agg,
+      generalWeek:
+        factor !== 1 && !generalWeekError ? scaleGeneralWeek(generalWeek, factor) : generalWeek,
       generalWeekError,
     };
   });
@@ -191,9 +249,51 @@
       {:else if flatPlans.length === 0 && touPlans.length === 0}
         <p role="alert">Create a plan on the Plans tab first.</p>
       {:else if period}
+        <fieldset>
+          <legend>Billing period</legend>
+          <label class="inline">
+            <input
+              type="radio"
+              name="periodMode"
+              value="custom"
+              checked={periodMode === 'custom'}
+              onchange={() => selectPeriodMode('custom')}
+            />
+            Custom
+          </label>
+          <label class="inline">
+            <input
+              type="radio"
+              name="periodMode"
+              value="lastQuarter"
+              checked={periodMode === 'lastQuarter'}
+              disabled={!lastQuarterPeriod}
+              onchange={() => selectPeriodMode('lastQuarter')}
+            />
+            Last quarter
+          </label>
+          <label class="inline">
+            <input
+              type="radio"
+              name="periodMode"
+              value="annual"
+              checked={periodMode === 'annual'}
+              onchange={() => selectPeriodMode('annual')}
+            />
+            Annual
+          </label>
+        </fieldset>
+        {#if !lastQuarterPeriod}
+          <p class="note">
+            Last quarter needs 3 complete calendar months of data; this property doesn't have enough
+            yet.
+          </p>
+        {/if}
+
         <!-- `|| null` (not just the raw value): clearing a date input via backspace fires
              onchange with '', which would otherwise bypass the ?? default above and feed an
-             unparseable date into daysInPeriod. -->
+             unparseable date into daysInPeriod. Editing either date directly always drops back to
+             'custom' — a partial manual edit must never be read as a preset with a stale factor. -->
         <div class="period">
           <label>
             Start
@@ -202,7 +302,10 @@
               min={compactToIso(usage.firstDate)}
               max={compactToIso(usage.lastDate)}
               value={period.start}
-              onchange={(e) => (startOverride = e.currentTarget.value || null)}
+              onchange={(e) => {
+                startOverride = e.currentTarget.value || null;
+                periodMode = 'custom';
+              }}
             />
           </label>
           <label>
@@ -212,7 +315,10 @@
               min={compactToIso(usage.firstDate)}
               max={compactToIso(usage.lastDate)}
               value={period.end}
-              onchange={(e) => (endOverride = e.currentTarget.value || null)}
+              onchange={(e) => {
+                endOverride = e.currentTarget.value || null;
+                periodMode = 'custom';
+              }}
             />
           </label>
         </div>
@@ -220,6 +326,31 @@
         {#if !periodValid}
           <p class="error" role="alert">The start date must not be after the end date.</p>
         {:else}
+          <p class="note">
+            Billing {period.start} to {period.end} ({periodAgg?.days ?? 0} day{periodAgg?.days === 1
+              ? ''
+              : 's'} for the supply charge).
+          </p>
+
+          {#if annualActive && annualWindow?.extrapolated}
+            <p class="banner" role="alert">
+              <strong>Estimated annual figure.</strong> Based on {annualWindow.sampledDays} day{annualWindow.sampledDays ===
+              1
+                ? ''
+                : 's'} of data ({dataSpan?.start} to {dataSpan?.end}), scaled x{annualWindow.factor.toFixed(
+                1,
+              )} to a 365-day year. This is an extrapolated estimate, not a measured annual bill, and
+              may be seasonally biased (e.g. a winter-only sample over-weights heating).
+            </p>
+          {/if}
+
+          {#if periodAgg && periodAgg.agg.daysWithData < periodAgg.sampledDays}
+            <p class="note" role="alert">
+              {periodAgg.sampledDays - periodAgg.agg.daysWithData} of {periodAgg.sampledDays} days in
+              this period have no data — totals (and the annual estimate) are understated by that shortfall.
+            </p>
+          {/if}
+
           <NonActualReadsBadge days={periodAgg?.agg.nonActualDayCount ?? 0} />
 
           {#if invalidTouPlans.length > 0}
@@ -282,6 +413,9 @@
                     <span class="rank">#{rank}</span>
                     {plan.name} <span class="retailer">({plan.retailer})</span>
                     {#if isCheapest}<span class="cheapest-tag">Cheapest</span>{/if}
+                    {#if annualActive && annualWindow?.extrapolated}
+                      <span class="estimated-tag">Estimated</span>
+                    {/if}
                   </h3>
                   <dl>
                     <dt>Supply</dt>
@@ -428,6 +562,14 @@
     font-size: 0.875rem;
   }
 
+  .banner {
+    background: #f5a62322;
+    border: 1px solid #f5a62366;
+    border-radius: 4px;
+    padding: 0.75rem 1rem;
+    max-width: 40rem;
+  }
+
   .period {
     display: flex;
     gap: 1.5rem;
@@ -486,6 +628,14 @@
     font-size: 0.8rem;
     text-transform: uppercase;
     letter-spacing: 0.03em;
+  }
+
+  .estimated-tag {
+    font-weight: 600;
+    font-size: 0.8rem;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    color: #b36b00;
   }
 
   .retailer {

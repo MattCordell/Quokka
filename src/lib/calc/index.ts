@@ -4,7 +4,15 @@ export { aggregateUsage } from './aggregate';
 export { daysInPeriod, dayInPeriod, isoToCompact, compactToIso, dayOfWeek } from './period';
 export { computeCalibration, manualCategoryUsage } from './calibration';
 export { priceDiscounts } from './discount';
+export {
+  ANNUAL_DAYS,
+  resolveLastQuarter,
+  resolveAnnual,
+  scaleCategoryUsage,
+  scaleGeneralWeek,
+} from './billingPeriod';
 export type { Bill, BandCharge, CategoryUsage, Period, TotalBasis } from './types';
+export type { AnnualWindow } from './billingPeriod';
 export type { ManualBillInput, CalibrationResult } from './calibration';
 export type { DiscountLine, DiscountBreakdown, DiscountableCharges } from './discount';
 export { CalcError } from './types';

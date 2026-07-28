@@ -32,7 +32,8 @@ export interface CalibrationResult {
  * Shapes manually-entered category totals into a CategoryUsage. A `null` CL leaves its
  * `mappedCategories` flag false, so `priceFlatBill`'s ADR-0002 gate renders it "not applicable";
  * entering a figure (including 0) marks that circuit as present. Solar is never gated. Manual
- * totals aren't interval reads, so `hasNonActualReads` is always false.
+ * totals aren't interval reads, so `hasNonActualReads` is always false, and `daysWithData` is set
+ * to the full period length — a manually-entered total carries no gaps to disclose.
  */
 export function manualCategoryUsage(input: ManualBillInput): CategoryUsage {
   return {
@@ -52,6 +53,7 @@ export function manualCategoryUsage(input: ManualBillInput): CategoryUsage {
     },
     hasNonActualReads: false,
     nonActualDayCount: 0,
+    daysWithData: daysInPeriod(input.period),
   };
 }
 
