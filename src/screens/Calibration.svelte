@@ -146,15 +146,26 @@
       <article class="result">
         <h3>Calculated vs actual</h3>
         <dl class="summary">
-          <dt>Calculated total</dt>
-          <dd>{formatCents(result.bill.totalCents)}</dd>
+          <dt>Calculated total (best-case)</dt>
+          <dd>{formatCents(result.bill.bestCaseTotalCents)}</dd>
+          {#if result.bill.guaranteedTotalCents !== result.bill.bestCaseTotalCents}
+            <dt>Calculated total (guaranteed)</dt>
+            <dd>{formatCents(result.bill.guaranteedTotalCents)}</dd>
+          {/if}
           <dt>Actual total</dt>
           <dd>{formatCents(result.actualCents)}</dd>
-          <dt class="total-label">Difference</dt>
+          <dt class="total-label">Difference (vs best-case)</dt>
           <dd class="total">{formatCents(result.differenceCents)}</dd>
           <dt>Variance</dt>
           <dd>{result.variancePct === null ? 'n/a' : `${result.variancePct.toFixed(2)}%`}</dd>
         </dl>
+        {#if result.bill.guaranteedTotalCents !== result.bill.bestCaseTotalCents}
+          <p class="note">
+            This plan has a conditional discount. Difference and variance compare the actual total
+            against the best case (every conditional discount met) — if you didn't meet one, compare
+            against the guaranteed total above instead.
+          </p>
+        {/if}
 
         {#if result.differenceCents !== 0}
           <p class="note">

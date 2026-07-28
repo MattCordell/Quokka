@@ -95,7 +95,7 @@ describe('computeFlatBill', () => {
 
     const bill = computeFlatBill(plan, usage, mapping, period);
 
-    expect(bill.totalCents).toBeLessThan(0);
+    expect(bill.bestCaseTotalCents).toBeLessThan(0);
   });
 
   it('keeps components at full precision and rounds only the total (ADR-0004)', () => {
@@ -110,7 +110,7 @@ describe('computeFlatBill', () => {
     const bill = computeFlatBill(plan, usage, mapping, { start: '2025-07-01', end: '2025-07-01' });
 
     expect(bill.generalUsageCents).toBeCloseTo(2.1); // 0.7 kWh * 3c, unrounded
-    expect(bill.totalCents).toBe(2); // Math.round(2.1)
+    expect(bill.bestCaseTotalCents).toBe(2); // Math.round(2.1)
   });
 
   it('applies rates verbatim with no GST markup', () => {
@@ -125,7 +125,150 @@ describe('computeFlatBill', () => {
     const bill = computeFlatBill(plan, usage, mapping, period);
 
     expect(bill.generalUsageCents).toBe(300); // 10 kWh * 30c, no added tax
-    expect(bill.totalCents).toBe(300);
+    expect(bill.bestCaseTotalCents).toBe(300);
+  });
+});
+
+describe('computeFlatBill discounts', () => {
+  it('back-compat: with no discounts, both totals equal Math.round(preDiscountCents)', () => {
+    const usage = nmiData([register({ registerId: 'E1', days: [day({ values: [5, 5] })] })]);
+    const mapping: RegisterMapping = { nmi: '6407000000', registers: { E1: 'General' } };
+    const plan = flatPlan();
+
+    const bill = computeFlatBill(plan, usage, mapping, period);
+
+    expect(bill.guaranteedTotalCents).toBe(Math.round(bill.preDiscountCents));
+    expect(bill.bestCaseTotalCents).toBe(Math.round(bill.preDiscountCents));
+  });
+
+  it('excludes the Solar Credit from the discount base', () => {
+    // supply 200 + general 800, solar 400, 50% guaranteed on usage+supply => (200+800)*0.5 = 500
+    // total = 200 + 800 - 400 - 500 = 100 (a buggy discount-the-post-solar-subtotal would give 300)
+    const usage = nmiData([
+      register({ registerId: 'E1', days: [day({ values: [40, 40] })] }),
+      register({ registerId: 'B1', nmiSuffix: 'B1', days: [day({ values: [20, 20] })] }),
+    ]);
+    const mapping: RegisterMapping = {
+      nmi: '6407000000',
+      registers: { E1: 'General', B1: 'Generation' },
+    };
+    const plan = flatPlan({
+      supply: { generalCentsPerDay: 100, cl1CentsPerDay: 0, cl2CentsPerDay: 0 },
+      usage: { generalRateCentsPerKwh: 10 },
+      feedInRateCentsPerKwh: 10,
+      discounts: [
+        {
+          id: 'd1',
+          label: 'Half off',
+          kind: 'guaranteed',
+          percent: 50,
+          components: ['usage', 'supply'],
+        },
+      ],
+    });
+
+    const bill = computeFlatBill(plan, usage, mapping, period);
+
+    expect(bill.supplyCents).toBe(200);
+    expect(bill.generalUsageCents).toBe(800);
+    expect(bill.solarCreditCents).toBe(400);
+    expect(bill.guaranteedTotalCents).toBe(100);
+  });
+
+  it('includes CL usage inside the "usage" discount component', () => {
+    const usage = nmiData([
+      register({ registerId: 'E1', days: [day({ values: [10, 10] })] }),
+      register({ registerId: 'E3', nmiSuffix: 'E3', days: [day({ values: [5, 5] })] }),
+    ]);
+    const mapping: RegisterMapping = {
+      nmi: '6407000000',
+      registers: { E1: 'General', E3: 'CL1' },
+    };
+    const plan = flatPlan({
+      supply: { generalCentsPerDay: 0, cl1CentsPerDay: 0, cl2CentsPerDay: 0 },
+      usage: { generalRateCentsPerKwh: 10 },
+      controlledLoad: { cl1RateCentsPerKwh: 10, cl2RateCentsPerKwh: 0 },
+      feedInRateCentsPerKwh: 0,
+      discounts: [
+        { id: 'd1', label: 'Usage only', kind: 'guaranteed', percent: 10, components: ['usage'] },
+      ],
+    });
+
+    const bill = computeFlatBill(plan, usage, mapping, period);
+
+    // general 200 + cl1 100 = 300 usage base; 10% = 30
+    expect(bill.discountLines[0].baseCents).toBe(300);
+    expect(bill.guaranteedDiscountCents).toBe(30);
+  });
+
+  it('allows a negative total even with discounts applied, unclamped', () => {
+    const usage = nmiData([
+      register({ registerId: 'E1', days: [day({ values: [0, 0] })] }),
+      register({ registerId: 'B1', nmiSuffix: 'B1', days: [day({ values: [50, 50] })] }),
+    ]);
+    const mapping: RegisterMapping = {
+      nmi: '6407000000',
+      registers: { E1: 'General', B1: 'Generation' },
+    };
+    const plan = flatPlan({
+      supply: { generalCentsPerDay: 10, cl1CentsPerDay: 0, cl2CentsPerDay: 0 },
+      feedInRateCentsPerKwh: 100,
+      discounts: [{ id: 'd1', label: '', kind: 'guaranteed', percent: 10, components: ['supply'] }],
+    });
+
+    const bill = computeFlatBill(plan, usage, mapping, period);
+
+    expect(bill.bestCaseTotalCents).toBeLessThan(0);
+  });
+
+  it('double-rounding guard: a 0.5% guaranteed and 0.5% conditional discount round independently', () => {
+    // preDiscountCents = 100.0 exactly (via a non-integer rate producing a clean base)
+    const usage = nmiData([register({ registerId: 'E1', days: [day({ values: [100, 0] })] })]);
+    const mapping: RegisterMapping = { nmi: '6407000000', registers: { E1: 'General' } };
+    const plan = flatPlan({
+      supply: { generalCentsPerDay: 0, cl1CentsPerDay: 0, cl2CentsPerDay: 0 },
+      usage: { generalRateCentsPerKwh: 1 },
+      feedInRateCentsPerKwh: 0,
+      discounts: [
+        {
+          id: 'g',
+          label: '',
+          kind: 'guaranteed',
+          percent: 0.5,
+          components: ['usage'],
+        },
+        {
+          id: 'c',
+          label: '',
+          kind: 'conditional',
+          percent: 0.5,
+          components: ['usage'],
+        },
+      ],
+    });
+
+    const bill = computeFlatBill(plan, usage, mapping, { start: '2025-07-01', end: '2025-07-01' });
+
+    // preDiscount = 100; guaranteed 0.5% = 0.5 -> round(99.5) = 100 (banker's-round-half-to-even
+    // in JS rounds .5 up, so Math.round(99.5) === 100); best-case 100 - 0.5 - 0.5 = 99 exactly.
+    expect(bill.guaranteedTotalCents).toBe(100);
+    expect(bill.bestCaseTotalCents).toBe(99);
+  });
+
+  it('monotonicity: a larger discount percent never increases the total', () => {
+    const usage = nmiData([register({ registerId: 'E1', days: [day({ values: [10, 10] })] })]);
+    const mapping: RegisterMapping = { nmi: '6407000000', registers: { E1: 'General' } };
+    const smaller = flatPlan({
+      discounts: [{ id: 'd', label: '', kind: 'guaranteed', percent: 5, components: ['usage'] }],
+    });
+    const larger = flatPlan({
+      discounts: [{ id: 'd', label: '', kind: 'guaranteed', percent: 20, components: ['usage'] }],
+    });
+
+    const smallerBill = computeFlatBill(smaller, usage, mapping, period);
+    const largerBill = computeFlatBill(larger, usage, mapping, period);
+
+    expect(largerBill.guaranteedTotalCents).toBeLessThanOrEqual(smallerBill.guaranteedTotalCents);
   });
 });
 

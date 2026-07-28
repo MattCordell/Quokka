@@ -1,5 +1,5 @@
 import type { FlatPlan } from '../plan/types';
-import type { Bill, CategoryUsage, Period } from './types';
+import type { Bill, CategoryUsage, Period, TotalBasis } from './types';
 import { daysInPeriod } from './period';
 import { priceFlatBill } from './flat';
 
@@ -20,6 +20,8 @@ export interface ManualBillInput {
 export interface CalibrationResult {
   bill: Bill;
   actualCents: number;
+  /** Which of the bill's two totals this result compares against (ADR-0007's ranking default). */
+  basis: TotalBasis;
   /** Calculated total minus actual, in cents (signed). */
   differenceCents: number;
   /** 100 * differenceCents / actualCents; null when actualCents is 0 (division undefined). */
@@ -49,18 +51,25 @@ export function manualCategoryUsage(input: ManualBillInput): CategoryUsage {
       Ignore: false,
     },
     hasNonActualReads: false,
+    nonActualDayCount: 0,
   };
 }
 
 /**
  * Runs manually-entered bill totals through the same flat-rate pricer used for interval data
  * (`priceFlatBill`) — no parallel calc path — and compares the result to the entered actual
- * total (PRD §7.5 Calibration Check).
+ * total (PRD §7.5 Calibration Check). `basis` defaults to 'bestCase' (ADR-0007's ranking
+ * default); the fixture plan carries no discounts, so both totals coincide for existing callers.
  */
-export function computeCalibration(plan: FlatPlan, input: ManualBillInput): CalibrationResult {
+export function computeCalibration(
+  plan: FlatPlan,
+  input: ManualBillInput,
+  basis: TotalBasis = 'bestCase',
+): CalibrationResult {
   const days = daysInPeriod(input.period);
   const bill = priceFlatBill(plan, manualCategoryUsage(input), days, input.period);
-  const differenceCents = bill.totalCents - input.actualCents;
+  const totalCents = basis === 'guaranteed' ? bill.guaranteedTotalCents : bill.bestCaseTotalCents;
+  const differenceCents = totalCents - input.actualCents;
   const variancePct = input.actualCents === 0 ? null : (differenceCents / input.actualCents) * 100;
-  return { bill, actualCents: input.actualCents, differenceCents, variancePct };
+  return { bill, actualCents: input.actualCents, basis, differenceCents, variancePct };
 }

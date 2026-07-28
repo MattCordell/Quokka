@@ -1,13 +1,26 @@
 import type { Plan } from '../plan/types';
-import type { CategoryUsage } from './types';
+import type { DiscountBreakdown } from './discount';
+import type { BillTotals, CategoryUsage } from './types';
 
 /**
  * The sole rounding site (ADR-0004): every Bill component stays full precision, and only the
- * final total is rounded here. To flip to per-line rounding later, replace the body with:
- *   charges.reduce((a, c) => a + Math.round(c), 0) - Math.round(credit)
+ * two totals are rounded here, each independently from the full-precision base — bestCaseTotalCents
+ * is NOT guaranteedTotalCents - round(conditional), which would compound rounding error.
  */
-export function finalizeTotal(charges: number[], credit: number): number {
-  return Math.round(charges.reduce((a, c) => a + c, 0) - credit);
+export function finalizeBill(
+  charges: number[],
+  credit: number,
+  discounts: DiscountBreakdown,
+): BillTotals {
+  const preDiscountCents = charges.reduce((a, c) => a + c, 0) - credit;
+  const { guaranteedCents, conditionalCents } = discounts;
+  return {
+    preDiscountCents,
+    guaranteedDiscountCents: guaranteedCents,
+    conditionalDiscountCents: conditionalCents,
+    guaranteedTotalCents: Math.round(preDiscountCents - guaranteedCents),
+    bestCaseTotalCents: Math.round(preDiscountCents - guaranteedCents - conditionalCents),
+  };
 }
 
 /** ADR-0003: a 'N' quality flag zeroes that interval; every other flag (including substituted F/S) counts as-is. */

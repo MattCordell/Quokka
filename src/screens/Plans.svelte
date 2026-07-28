@@ -1,6 +1,12 @@
 <script lang="ts">
   import { loadPlans, savePlans } from '../lib/storage/persistence';
-  import { TOU_DAYS, type Plan, type TouBand } from '../lib/plan/types';
+  import {
+    DISCOUNT_COMPONENTS,
+    TOU_DAYS,
+    type Discount,
+    type Plan,
+    type TouBand,
+  } from '../lib/plan/types';
   import { analyzeCoverage, formatTime, parseTime } from '../lib/plan/coverage';
   import CoverageStrip from '../components/CoverageStrip.svelte';
 
@@ -16,6 +22,7 @@
     cl1RateCentsPerKwh: number;
     cl2RateCentsPerKwh: number;
     feedInRateCentsPerKwh: number;
+    discounts: Discount[];
   }
 
   // 30-min grid (ADR-0001): "starts" options are inclusive marks 00:00-23:30; "ends" options
@@ -33,6 +40,19 @@
     };
   }
 
+  // 'conditional' is the conservative default direction: mis-recording a conditional discount as
+  // guaranteed understates the guaranteed total (promises a price the user might not get), while
+  // the reverse merely overstates guaranteed while best-case stays correct (ADR-0007).
+  function defaultDiscount(): Discount {
+    return {
+      id: crypto.randomUUID(),
+      label: '',
+      kind: 'conditional',
+      percent: 0,
+      components: [...DISCOUNT_COMPONENTS],
+    };
+  }
+
   function emptyForm(): FormState {
     return {
       type: 'flat_rate',
@@ -46,6 +66,7 @@
       cl1RateCentsPerKwh: 0,
       cl2RateCentsPerKwh: 0,
       feedInRateCentsPerKwh: 0,
+      discounts: [],
     };
   }
 
@@ -57,6 +78,15 @@
 
   // Only meaningful while form.type === 'time_of_use'; null otherwise.
   let coverage = $derived(form.type === 'time_of_use' ? analyzeCoverage(form.touBands, 30) : null);
+
+  // A discount with no component selected would price as a silent 0% — `required` can't express
+  // "at least one of this checkbox group", so it's checked here instead.
+  let discountErrors = $derived(form.discounts.map((d) => d.components.length === 0));
+  let discountPercentSum = $derived(form.discounts.reduce((sum, d) => sum + d.percent, 0));
+
+  let formValid = $derived(
+    (form.type !== 'time_of_use' || !!coverage?.ok) && !discountErrors.some((e) => e),
+  );
 
   function startCreate() {
     editingId = null;
@@ -80,6 +110,9 @@
       cl1RateCentsPerKwh: plan.controlledLoad.cl1RateCentsPerKwh,
       cl2RateCentsPerKwh: plan.controlledLoad.cl2RateCentsPerKwh,
       feedInRateCentsPerKwh: plan.feedInRateCentsPerKwh,
+      // components is a nested array — a shallow spread would alias the persisted plan and let
+      // an abandoned edit mutate loaded state.
+      discounts: plan.discounts.map((d) => ({ ...d, components: [...d.components] })),
     };
   }
 
@@ -91,6 +124,14 @@
     form.touBands = form.touBands.filter((_, i) => i !== index);
   }
 
+  function addDiscount() {
+    form.discounts = [...form.discounts, defaultDiscount()];
+  }
+
+  function removeDiscount(index: number) {
+    form.discounts = form.discounts.filter((_, i) => i !== index);
+  }
+
   function persist(next: Plan[]) {
     plans = next;
     const result = savePlans(next);
@@ -99,7 +140,7 @@
 
   function submitForm(event: SubmitEvent) {
     event.preventDefault();
-    if (form.type === 'time_of_use' && !coverage?.ok) return;
+    if (!formValid) return;
 
     const base = {
       id: editingId ?? crypto.randomUUID(),
@@ -115,7 +156,7 @@
         cl2RateCentsPerKwh: form.cl2RateCentsPerKwh,
       },
       feedInRateCentsPerKwh: form.feedInRateCentsPerKwh,
-      discounts: [] as never[],
+      discounts: form.discounts.map((d) => ({ ...d, components: [...d.components] })),
     };
 
     const plan: Plan =
@@ -131,6 +172,16 @@
 
     persist(next);
     startCreate();
+  }
+
+  function describeDiscounts(plan: Plan): string {
+    if (plan.discounts.length === 0) return 'None';
+    return plan.discounts
+      .map(
+        (d) =>
+          `${d.label || (d.kind === 'guaranteed' ? 'Guaranteed' : 'Conditional')} ${d.percent}%`,
+      )
+      .join(', ');
   }
 
   function deletePlan(id: string) {
@@ -213,6 +264,80 @@
       </label>
     </fieldset>
 
+    <fieldset>
+      <legend>Discounts</legend>
+
+      {#each form.discounts as discount, i (discount.id)}
+        <fieldset class="discount">
+          <legend>Discount {i + 1}</legend>
+          <label>
+            Label
+            <input type="text" bind:value={discount.label} placeholder="e.g. Pay on time" />
+          </label>
+          <fieldset class="kind">
+            <legend>Kind</legend>
+            <label class="inline">
+              <input
+                type="radio"
+                name="discountKind{i}"
+                value="guaranteed"
+                bind:group={discount.kind}
+              />
+              Guaranteed
+            </label>
+            <label class="inline">
+              <input
+                type="radio"
+                name="discountKind{i}"
+                value="conditional"
+                bind:group={discount.kind}
+              />
+              Conditional
+            </label>
+          </fieldset>
+          <label>
+            Percent (%)
+            <input
+              type="number"
+              min="0"
+              max="100"
+              step="0.01"
+              bind:value={discount.percent}
+              required
+            />
+          </label>
+          <fieldset class="components">
+            <legend>Applies to</legend>
+            {#each DISCOUNT_COMPONENTS as component (component)}
+              <label class="inline">
+                <input type="checkbox" bind:group={discount.components} value={component} />
+                {component === 'usage' ? 'Usage' : 'Supply charge'}
+              </label>
+            {/each}
+          </fieldset>
+          {#if discountErrors[i]}
+            <p class="error" role="alert">
+              Select at least one component this discount applies to.
+            </p>
+          {/if}
+          <button type="button" onclick={() => removeDiscount(i)}>Remove discount</button>
+        </fieldset>
+      {/each}
+
+      <button type="button" onclick={addDiscount}>Add discount</button>
+
+      {#if discountPercentSum > 100}
+        <p class="note">
+          These discount percentages sum to over 100% — double-check this is intentional.
+        </p>
+      {/if}
+
+      <p class="note">
+        A guaranteed discount always applies; a conditional discount (e.g. pay-on-time) only applies
+        to the best-case total (ADR-0007).
+      </p>
+    </fieldset>
+
     {#if form.type === 'time_of_use'}
       <fieldset>
         <legend>TOU bands (General usage)</legend>
@@ -287,7 +412,7 @@
       — otherwise they show as "not applicable" on a bill, regardless of what's entered here.
     </p>
 
-    <button type="submit" disabled={form.type === 'time_of_use' && !coverage?.ok}>
+    <button type="submit" disabled={!formValid}>
       {editingId ? 'Save changes' : 'Create plan'}
     </button>
     {#if editingId}
@@ -302,6 +427,7 @@
           <th>Name</th>
           <th>Retailer</th>
           <th>Type</th>
+          <th>Discounts</th>
           <th><span class="sr-only">Edit</span></th>
           <th><span class="sr-only">Delete</span></th>
         </tr>
@@ -312,6 +438,7 @@
             <td>{p.name}</td>
             <td>{p.retailer}</td>
             <td>{p.type === 'flat_rate' ? 'Flat rate' : 'Time of use'}</td>
+            <td>{describeDiscounts(p)}</td>
             <td>
               <button type="button" onclick={() => startEdit(p)}>Edit</button>
             </td>
@@ -366,7 +493,14 @@
     margin-top: 0.75rem;
   }
 
-  fieldset.days {
+  fieldset.discount {
+    border: 1px solid #8886;
+    margin-top: 0.75rem;
+  }
+
+  fieldset.days,
+  fieldset.kind,
+  fieldset.components {
     border: none;
     padding: 0;
   }

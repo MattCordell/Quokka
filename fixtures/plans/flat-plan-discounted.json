@@ -1,0 +1,36 @@
+{
+  "id": "plan-flat-discount-demo",
+  "name": "Demo Flat 30 (discounted)",
+  "retailer": "Synthetic Energy Co",
+  "type": "flat_rate",
+  "supply": {
+    "generalCentsPerDay": 100,
+    "cl1CentsPerDay": 5,
+    "cl2CentsPerDay": 0
+  },
+  "usage": {
+    "generalRateCentsPerKwh": 30
+  },
+  "controlledLoad": {
+    "cl1RateCentsPerKwh": 20,
+    "cl2RateCentsPerKwh": 0
+  },
+  "feedInRateCentsPerKwh": 5,
+  "discounts": [
+    {
+      "id": "disc-guaranteed-demo",
+      "label": "Direct debit",
+      "kind": "guaranteed",
+      "percent": 10,
+      "components": ["usage", "supply"]
+    },
+    {
+      "id": "disc-conditional-demo",
+      "label": "Pay on time",
+      "kind": "conditional",
+      "percent": 5,
+      "components": ["usage"]
+    }
+  ],
+  "_note": "Identical rates to flat-plan.json (reuses the golden usage and 210/1740/80/40 components verbatim) plus a guaranteed 10% (usage+supply) and conditional 5% (usage only) discount (ADR-0007). Guaranteed total $17.87, best-case $16.96 (fixtures/expected/golden-bills.json)."
+}

@@ -164,7 +164,7 @@ describe('priceTouBill / computeTouBill', () => {
 
     const peak = bill.bands?.find((b) => b.label === 'Peak');
     expect(peak?.cents).toBeCloseTo(0.5 * 50, 10); // 0.05 kWh x 10 slots = 0.5 kWh, unrounded x 50c = 25
-    expect(Number.isInteger(bill.totalCents)).toBe(true);
+    expect(Number.isInteger(bill.bestCaseTotalCents)).toBe(true);
   });
 
   it('allows a negative (net-credit) total, never clamped (ADR-0004)', () => {
@@ -187,7 +187,7 @@ describe('priceTouBill / computeTouBill', () => {
 
     const bill = computeTouBill(plan, usage, mapping, period);
 
-    expect(bill.totalCents).toBeLessThan(0);
+    expect(bill.bestCaseTotalCents).toBeLessThan(0);
   });
 
   it('throws CalcError for a General register coarser than the 30-min coverage grid', () => {
@@ -224,5 +224,27 @@ describe('priceTouBill / computeTouBill', () => {
     const plan = touPlan([PEAK]); // covers only 16:00-21:00 on TUE; the rest of the day is a gap
 
     expect(() => computeTouBill(plan, usage, mapping, period)).toThrow(CalcError);
+  });
+
+  it("discount parity: a 'usage' discount's baseCents sums the band cents plus CL, matching flat", () => {
+    const usage = nmiData([
+      register({ registerId: 'E1' }), // General, 24 kWh split across PEAK/OFFPEAK_WEEKDAY
+      register({
+        registerId: 'E3',
+        nmiSuffix: 'E3',
+        days: [day({ values: new Array(48).fill(1) })],
+      }),
+    ]);
+    const mapping: RegisterMapping = {
+      nmi: '6407000000',
+      registers: { E1: 'General', E3: 'CL1' },
+    };
+    const plan = touPlan([PEAK, OFFPEAK_WEEKDAY], {
+      discounts: [{ id: 'd', label: '', kind: 'guaranteed', percent: 10, components: ['usage'] }],
+    });
+
+    const bill = computeTouBill(plan, usage, mapping, period);
+
+    expect(bill.discountLines[0].baseCents).toBe(bill.generalUsageCents + bill.cl1Cents);
   });
 });

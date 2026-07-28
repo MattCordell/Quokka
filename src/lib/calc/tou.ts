@@ -5,7 +5,8 @@ import { formatTime, parseTime, slotInBand } from '../plan/coverage';
 import { CalcError, type Bill, type BandCharge, type CategoryUsage, type Period } from './types';
 import { daysInPeriod, dayInPeriod, dayOfWeek } from './period';
 import { aggregateUsage } from './aggregate';
-import { finalizeTotal, priceSupplyClSolar, resolveIntervalKwh } from './common';
+import { finalizeBill, priceSupplyClSolar, resolveIntervalKwh } from './common';
+import { priceDiscounts } from './discount';
 
 // Matches the fixed grid Band Coverage is validated against (plan/coverage.ts's default
 // intervalMinutes). A 30-min-aligned band boundary can only ever fall on an interval edge, never
@@ -19,7 +20,7 @@ function weekSlotKey(day: TouDay, minute: number): string {
   return `${day}|${minute}`;
 }
 
-function parseWeekSlotKey(key: string): { day: TouDay; minute: number } {
+export function parseWeekSlotKey(key: string): { day: TouDay; minute: number } {
   const [day, minute] = key.split('|');
   return { day: day as TouDay, minute: Number(minute) };
 }
@@ -113,9 +114,14 @@ export function priceTouBill(
   }));
   const generalUsageCents = bands.reduce((sum, b) => sum + b.cents, 0);
 
-  const totalCents = finalizeTotal(
+  const discounts = priceDiscounts(plan.discounts, {
+    supplyCents,
+    usageCents: generalUsageCents + cl1Cents + cl2Cents,
+  });
+  const totals = finalizeBill(
     [supplyCents, generalUsageCents, cl1Cents, cl2Cents],
     solarCreditCents,
+    discounts,
   );
 
   return {
@@ -130,8 +136,10 @@ export function priceTouBill(
     cl2Applicable,
     cl2Cents,
     solarCreditCents,
-    totalCents,
+    ...totals,
+    discountLines: discounts.lines,
     hasNonActualReads: agg.hasNonActualReads,
+    nonActualDayCount: agg.nonActualDayCount,
   };
 }
 

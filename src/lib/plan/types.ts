@@ -2,10 +2,23 @@
  * The Plan schema, codified from fixtures/plans/{flat-plan,tou-plan}.json. All rates are
  * integer cents, GST-inclusive (PRD 7.4) — there is no separate GST field anywhere.
  */
-// Reserved (ADR-0007, deferred): guaranteed vs conditional discount components. Always []
-// until that ticket lands — typed `never` rather than an open shape so `discounts: Discount[]`
-// can't silently accept malformed data before there's a real Discount shape to validate against.
-export type Discount = never;
+export const DISCOUNT_KINDS = ['guaranteed', 'conditional'] as const;
+export type DiscountKind = (typeof DISCOUNT_KINDS)[number];
+
+export const DISCOUNT_COMPONENTS = ['usage', 'supply'] as const;
+/** 'usage' = General + CL1 + CL2 usage; 'supply' = the daily supply charge.
+ *  The Solar Credit is never discountable (ADR-0007) and is deliberately not representable. */
+export type DiscountComponent = (typeof DISCOUNT_COMPONENTS)[number];
+export const DEFAULT_DISCOUNT_COMPONENTS: readonly DiscountComponent[] = ['usage', 'supply'];
+
+/** ADR-0007: a guaranteed discount always applies; a conditional one only in the best-case total. */
+export interface Discount {
+  id: string; // crypto.randomUUID(), for {#each} keying + joining Bill lines back
+  label: string; // "Pay on time"; may be empty, UI falls back to a kind-derived label
+  kind: DiscountKind;
+  percent: number; // 0-100 inclusive
+  components: DiscountComponent[]; // non-empty
+}
 
 export interface SupplyCharges {
   generalCentsPerDay: number;
@@ -69,8 +82,7 @@ export function isValidPlan(value: unknown): value is Plan {
   if (!isRecord(value)) return false;
   if (typeof value.id !== 'string' || typeof value.name !== 'string') return false;
   if (typeof value.retailer !== 'string') return false;
-  // Always [] until ADR-0007 lands (see Discount above) — a non-empty array is unsupported.
-  if (!Array.isArray(value.discounts) || value.discounts.length !== 0) return false;
+  if (!Array.isArray(value.discounts) || !value.discounts.every(isValidDiscount)) return false;
 
   const supply = value.supply;
   if (
@@ -113,6 +125,21 @@ export function isValidPlan(value: unknown): value is Plan {
 const TIME_PATTERN = /^([01]\d|2[0-3]):[0-5]\d$/;
 // endTime additionally accepts "24:00", the end-of-day exclusive sentinel (ADR-0001).
 const END_TIME_PATTERN = /^([01]\d|2[0-3]):[0-5]\d$|^24:00$/;
+
+/**
+ * Exported (not private like isValidTouBand) so the plan editor can validate one discount row
+ * without building a whole plan. Deliberately does not reject duplicate components (parity with
+ * TouBand.days; the pricer uses `.includes()`) or duplicate ids across a plan's discount list.
+ */
+export function isValidDiscount(value: unknown): value is Discount {
+  if (!isRecord(value)) return false;
+  if (typeof value.id !== 'string' || value.id === '') return false;
+  if (typeof value.label !== 'string') return false;
+  if (!(DISCOUNT_KINDS as readonly string[]).includes(value.kind as string)) return false;
+  if (!isFiniteNumber(value.percent) || value.percent < 0 || value.percent > 100) return false;
+  if (!Array.isArray(value.components) || value.components.length === 0) return false;
+  return value.components.every((c) => (DISCOUNT_COMPONENTS as readonly string[]).includes(c));
+}
 
 function isValidTouBand(value: unknown): value is TouBand {
   if (!isRecord(value)) return false;
