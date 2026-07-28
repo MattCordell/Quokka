@@ -17,6 +17,12 @@ function emptyRecord<T>(value: T): Record<UsageCategory, T> {
  * are excluded entirely. A `quality` flag of `'N'` zeroes that interval regardless of its raw
  * value; every other flag (including substituted `F`/`S`) is summed as-is, and any flag other
  * than `'A'` sets `hasNonActualReads` (ADR-0003) — computed over the selected period only.
+ *
+ * `nonActualDayCount` counts distinct in-period days where any counted interval resolved to a
+ * non-'A' flag — one flagged interval marks the whole day. Generation counts too: an estimated
+ * export day distorts the solar credit the same way a General estimate distorts usage. Dedup is
+ * cross-register (a `Set<string>` of `day.date`): the same calendar day can appear on more than
+ * one mapped register (e.g. General + Generation + CL1), and must still count once.
  */
 export function aggregateUsage(
   usage: NmiData,
@@ -26,6 +32,7 @@ export function aggregateUsage(
   const kwhByCategory = emptyRecord(0);
   const mappedCategories = emptyRecord(false);
   let hasNonActualReads = false;
+  const nonActualDays = new Set<string>();
 
   for (const register of usage.registers) {
     const category = mapping.registers[register.registerId];
@@ -38,11 +45,19 @@ export function aggregateUsage(
 
       for (let i = 0; i < day.values.length; i++) {
         const quality = day.quality[i];
-        if (quality !== 'A') hasNonActualReads = true;
+        if (quality !== 'A') {
+          hasNonActualReads = true;
+          nonActualDays.add(day.date);
+        }
         kwhByCategory[category] += resolveIntervalKwh(quality, day.values[i]);
       }
     }
   }
 
-  return { kwhByCategory, mappedCategories, hasNonActualReads };
+  return {
+    kwhByCategory,
+    mappedCategories,
+    hasNonActualReads,
+    nonActualDayCount: nonActualDays.size,
+  };
 }

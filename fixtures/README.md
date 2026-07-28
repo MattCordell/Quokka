@@ -28,8 +28,9 @@ NEM12 export during the design grilling (see [ADR-0001](../docs/adr/0001-tou-ban
 | `legacy-csv/legacy-sample.csv` | Deferred fallback format reference (ADR-0015) | long format, 30-min, 2 *unlabelled* Consumption + 1 Feed In per interval, reverse-chronological, `+10:00` |
 | `plans/flat-plan.json` | Demo flat-rate plan | matches golden expected results |
 | `plans/tou-plan.json` | Demo TOU plan | 3 bands covering all 168h, half-open, midnight-wrapping off-peak |
+| `plans/flat-plan-discounted.json` | Demo flat plan + discounts (ADR-0007) | same rates as `flat-plan.json`; guaranteed 10% (usage+supply) + conditional 5% (usage) |
 | `mapping/golden-register-mapping.json` | Register→category for the golden file | E1→General, B1→Generation, E3→CL1 |
-| `expected/golden-bills.json` | Hand-computed expected bills | flat **$19.90**, TOU **$22.20** — the assertion oracle |
+| `expected/golden-bills.json` | Hand-computed expected bills | flat **$19.90**, TOU **$22.20**, discounted flat guaranteed **$17.87** / best-case **$16.96** — the assertion oracle |
 
 ## The golden scenario (why the numbers are what they are)
 
@@ -48,3 +49,15 @@ Two weekdays (1–2 Jul 2025), 30-min intervals. Over the 2-day period:
 These exercise the load-bearing rules: half-open TOU band assignment ([ADR-0001](../docs/adr/0001-tou-band-boundary-model.md)),
 CL charges only when a CL register is mapped ([ADR-0002](../docs/adr/0002-controlled-load-charges-require-circuit.md)),
 inclusive day count ([ADR-0005](../docs/adr/0005-days-in-period.md)), and solar credit subtraction.
+
+`plans/flat-plan-discounted.json` reuses the same golden usage and identical rates as
+`flat-plan.json` (supply 210c, general usage 1740c, CL1 80c, solar credit −40c — pre-discount
+total 1990c) plus a guaranteed 10% discount on usage+supply and a conditional 5% discount on
+usage only (ADR-0007):
+
+- Guaranteed base = supply 210 + usage 1820 = 2030 → 10% = 203c → guaranteed total 1990 − 203 = **$17.87**
+- Conditional base = usage only 1820 → 5% = 91c → best-case total 1990 − 203 − 91 = **$16.96**
+
+This one plan covers both discount kinds, both component variants (`usage` alone vs
+`usage`+`supply`), the solar-credit exclusion (the 40c credit sits outside both discount bases),
+and the two-total split.

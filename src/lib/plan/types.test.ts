@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { isValidPlan } from './types';
-import type { FlatPlan, TouBand, TouPlan } from './types';
+import { isValidDiscount, isValidPlan } from './types';
+import type { Discount, FlatPlan, TouBand, TouPlan } from './types';
 
 function validFlatPlan(): FlatPlan {
   return {
@@ -20,6 +20,16 @@ function omit<T extends object>(value: T, key: keyof T): Record<string, unknown>
   const copy: Record<string, unknown> = { ...value };
   delete copy[key as string];
   return copy;
+}
+
+function validDiscount(): Discount {
+  return {
+    id: 'disc-a',
+    label: 'Direct debit',
+    kind: 'guaranteed',
+    percent: 10,
+    components: ['usage', 'supply'],
+  };
 }
 
 function validBand(): TouBand {
@@ -74,7 +84,17 @@ describe('isValidPlan', () => {
     expect(isValidPlan(omit(validFlatPlan(), 'retailer'))).toBe(false);
   });
 
-  it('rejects a non-empty discounts array (unsupported pending ADR-0007)', () => {
+  it('accepts a well-formed discounts list', () => {
+    expect(
+      isValidPlan({ ...validFlatPlan(), discounts: [validDiscount(), { ...validDiscount(), id: 'disc-b', kind: 'conditional' }] }),
+    ).toBe(true);
+  });
+
+  it('still accepts an empty discounts array', () => {
+    expect(isValidPlan({ ...validFlatPlan(), discounts: [] })).toBe(true);
+  });
+
+  it('rejects a plan whose discounts contains a malformed entry', () => {
     expect(isValidPlan({ ...validFlatPlan(), discounts: [{ kind: 'guaranteed' }] })).toBe(false);
   });
 
@@ -151,5 +171,55 @@ describe('isValidPlan', () => {
 
   it('rejects an unrecognised plan type', () => {
     expect(isValidPlan({ ...validFlatPlan(), type: 'demand' })).toBe(false);
+  });
+});
+
+describe('isValidDiscount', () => {
+  it('accepts a well-formed discount', () => {
+    expect(isValidDiscount(validDiscount())).toBe(true);
+  });
+
+  it('accepts percent 0 and 100', () => {
+    expect(isValidDiscount({ ...validDiscount(), percent: 0 })).toBe(true);
+    expect(isValidDiscount({ ...validDiscount(), percent: 100 })).toBe(true);
+  });
+
+  it('rejects non-object values', () => {
+    expect(isValidDiscount(null)).toBe(false);
+    expect(isValidDiscount(undefined)).toBe(false);
+    expect(isValidDiscount('discount')).toBe(false);
+  });
+
+  it('rejects a non-string or empty id', () => {
+    expect(isValidDiscount({ ...validDiscount(), id: 42 })).toBe(false);
+    expect(isValidDiscount({ ...validDiscount(), id: '' })).toBe(false);
+  });
+
+  it('rejects a non-string label', () => {
+    expect(isValidDiscount({ ...validDiscount(), label: 42 })).toBe(false);
+  });
+
+  it('rejects an unknown kind', () => {
+    expect(isValidDiscount({ ...validDiscount(), kind: 'unconditional' })).toBe(false);
+  });
+
+  it('rejects a non-finite or out-of-range percent', () => {
+    expect(isValidDiscount({ ...validDiscount(), percent: 'ten' })).toBe(false);
+    expect(isValidDiscount({ ...validDiscount(), percent: -1 })).toBe(false);
+    expect(isValidDiscount({ ...validDiscount(), percent: 101 })).toBe(false);
+    expect(isValidDiscount({ ...validDiscount(), percent: Infinity })).toBe(false);
+  });
+
+  it('rejects a non-array or empty components list', () => {
+    expect(isValidDiscount({ ...validDiscount(), components: 'usage' })).toBe(false);
+    expect(isValidDiscount({ ...validDiscount(), components: [] })).toBe(false);
+  });
+
+  it('rejects an unknown component value', () => {
+    expect(isValidDiscount({ ...validDiscount(), components: ['usage', 'gst'] })).toBe(false);
+  });
+
+  it('accepts duplicate components (parity with TouBand.days)', () => {
+    expect(isValidDiscount({ ...validDiscount(), components: ['usage', 'usage'] })).toBe(true);
   });
 });

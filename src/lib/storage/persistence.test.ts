@@ -188,6 +188,55 @@ describe('persistence', () => {
     expect(loadPlans(storage)).toEqual([touPlan('plan-tou-good')]);
   });
 
+  it('round-trips a discounted plan', () => {
+    const discounted: FlatPlan = {
+      ...plan('plan-discount'),
+      discounts: [
+        {
+          id: 'd1',
+          label: 'Direct debit',
+          kind: 'guaranteed',
+          percent: 10,
+          components: ['usage', 'supply'],
+        },
+      ],
+    };
+    expect(savePlans([discounted], storage)).toEqual({ ok: true });
+    expect(loadPlans(storage)).toEqual([discounted]);
+  });
+
+  it('drops a plan with a discount percent out of range (e.g. 150) instead of a malformed bill', () => {
+    const badPercent = {
+      ...plan('plan-bad-percent'),
+      discounts: [
+        { id: 'd1', label: '', kind: 'guaranteed', percent: 150, components: ['usage'] },
+      ],
+    };
+    storage.setItem(
+      'quokka:plans',
+      JSON.stringify({
+        schemaVersion: SCHEMA_VERSION,
+        savedAt: 'x',
+        data: [plan('plan-good'), badPercent],
+      }),
+    );
+
+    expect(loadPlans(storage)).toEqual([plan('plan-good')]);
+  });
+
+  it('still loads a discounts: [] plan saved at schema v1', () => {
+    storage.setItem(
+      'quokka:plans',
+      JSON.stringify({
+        schemaVersion: 1,
+        savedAt: 'x',
+        data: [plan('plan-a')],
+      }),
+    );
+
+    expect(loadPlans(storage)).toEqual([plan('plan-a')]);
+  });
+
   it('keeps a shape-valid TOU plan whose Band Coverage has a gap, rather than silently deleting an authored plan', () => {
     const gappy = {
       ...touPlan('plan-tou-gap'),

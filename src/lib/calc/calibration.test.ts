@@ -32,7 +32,7 @@ describe('computeCalibration — golden scenario (ADR-0015 acceptance test)', ()
   it('shows $0.00 difference and 0% variance against the real invoice total', () => {
     expect(goldenResult.differenceCents).toBe(0);
     expect(goldenResult.variancePct).toBe(0);
-    expect(goldenResult.bill.totalCents).toBe(1990);
+    expect(goldenResult.bill.bestCaseTotalCents).toBe(1990);
   });
 
   it('reproduces the golden bill component-for-component — same engine, not a parallel path', () => {

@@ -1,7 +1,13 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { aggregateUsage } from './aggregate';
+import { parseNem12 } from '../nem12';
 import type { NmiData, Register, RegisterDay } from '../nem12';
 import type { RegisterMapping } from '../mapping/types';
+
+function readFixture(relativePath: string): string {
+  return readFileSync(new URL(`../../../fixtures/${relativePath}`, import.meta.url), 'utf-8');
+}
 
 function day(overrides: Partial<RegisterDay>): RegisterDay {
   const values = overrides.values ?? [1, 1];
@@ -132,5 +138,116 @@ describe('aggregateUsage', () => {
 
     expect(result.mappedCategories.CL1).toBe(true);
     expect(result.kwhByCategory.CL1).toBe(0);
+  });
+});
+
+describe('aggregateUsage nonActualDayCount', () => {
+  it('counts a single non-actual day', () => {
+    const usage = nmiData([
+      register({ registerId: 'E1', days: [day({ quality: ['A', 'N'] })] }),
+    ]);
+    const mapping: RegisterMapping = { nmi: '6407000000', registers: { E1: 'General' } };
+
+    expect(aggregateUsage(usage, mapping, period).nonActualDayCount).toBe(1);
+  });
+
+  it('dedupes the same date flagged across three registers (E1, B1, E3)', () => {
+    const usage = nmiData([
+      register({ registerId: 'E1', days: [day({ date: '20250701', quality: ['A', 'N'] })] }),
+      register({
+        registerId: 'B1',
+        nmiSuffix: 'B1',
+        days: [day({ date: '20250701', quality: ['F', 'F'] })],
+      }),
+      register({
+        registerId: 'E3',
+        nmiSuffix: 'E3',
+        days: [day({ date: '20250701', quality: ['S', 'A'] })],
+      }),
+    ]);
+    const mapping: RegisterMapping = {
+      nmi: '6407000000',
+      registers: { E1: 'General', B1: 'Generation', E3: 'CL1' },
+    };
+
+    expect(aggregateUsage(usage, mapping, period).nonActualDayCount).toBe(1);
+  });
+
+  it('counts two distinct non-actual dates as 2', () => {
+    const usage = nmiData([
+      register({
+        registerId: 'E1',
+        days: [
+          day({ date: '20250701', quality: ['A', 'N'] }),
+          day({ date: '20250702', quality: ['N', 'A'] }),
+        ],
+      }),
+    ]);
+    const mapping: RegisterMapping = { nmi: '6407000000', registers: { E1: 'General' } };
+
+    expect(aggregateUsage(usage, mapping, period).nonActualDayCount).toBe(2);
+  });
+
+  it('still counts a day once when many intervals in it are non-actual', () => {
+    const usage = nmiData([
+      register({
+        registerId: 'E1',
+        intervalsPerDay: 4,
+        days: [day({ values: [1, 1, 1, 1], quality: ['N', 'N', 'F', 'S'] })],
+      }),
+    ]);
+    const mapping: RegisterMapping = { nmi: '6407000000', registers: { E1: 'General' } };
+
+    expect(aggregateUsage(usage, mapping, period).nonActualDayCount).toBe(1);
+  });
+
+  it('does not count an out-of-period non-actual day', () => {
+    const usage = nmiData([
+      register({
+        registerId: 'E1',
+        days: [day({ date: '20250705', quality: ['N', 'N'] })],
+      }),
+    ]);
+    const mapping: RegisterMapping = { nmi: '6407000000', registers: { E1: 'General' } };
+
+    expect(aggregateUsage(usage, mapping, period).nonActualDayCount).toBe(0);
+  });
+
+  it('does not count a non-actual day on an Ignore or unmapped register', () => {
+    const usage = nmiData([register({ registerId: 'E1', days: [day({ quality: ['N', 'N'] })] })]);
+
+    const ignoredMapping: RegisterMapping = { nmi: '6407000000', registers: { E1: 'Ignore' } };
+    expect(aggregateUsage(usage, ignoredMapping, period).nonActualDayCount).toBe(0);
+
+    const unmappedMapping: RegisterMapping = { nmi: '6407000000', registers: {} };
+    expect(aggregateUsage(usage, unmappedMapping, period).nonActualDayCount).toBe(0);
+  });
+
+  it('invariant: hasNonActualReads === (nonActualDayCount > 0)', () => {
+    const mapping: RegisterMapping = { nmi: '6407000000', registers: { E1: 'General' } };
+
+    const clean = nmiData([register({ registerId: 'E1' })]);
+    const cleanResult = aggregateUsage(clean, mapping, period);
+    expect(cleanResult.hasNonActualReads).toBe(cleanResult.nonActualDayCount > 0);
+
+    const flagged = nmiData([register({ registerId: 'E1', days: [day({ quality: ['A', 'N'] })] })]);
+    const flaggedResult = aggregateUsage(flagged, mapping, period);
+    expect(flaggedResult.hasNonActualReads).toBe(flaggedResult.nonActualDayCount > 0);
+  });
+
+  it('quality-mixed fixture proof: the 20250704 V-day is flagged on E1/B1/E3 but counts once', () => {
+    const parsed = parseNem12(readFixture('nem12/nem12-quality-mixed.csv'));
+    const usage = parsed.nmis[0];
+    const mapping: RegisterMapping = {
+      nmi: usage.nmi,
+      registers: { E1: 'General', B1: 'Generation', E3: 'CL1' },
+    };
+
+    const result = aggregateUsage(usage, mapping, {
+      start: '2025-07-04',
+      end: '2025-07-04',
+    });
+
+    expect(result.nonActualDayCount).toBe(1);
   });
 });

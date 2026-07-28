@@ -38,3 +38,11 @@ Whether V1 supports *multiple* named discounts per plan or exactly one-guarantee
 
 - **Flat % always applied (PRD original).** Simple but overstates savings and hides conditional risk. Rejected.
 - **Multiple named discounts with per-discount flags.** Most expressive; kept as a non-precluded future option but not mandated for V1, to bound entry/UI effort.
+
+## Clarification (2026-07-28)
+
+The "usage" discount component (§ above) is **General + CL1 + CL2 usage cost**, matching the
+combined-usage convention ADR-0002 already established for the supply charge. The Solar Credit
+remains the one component this ADR names as never discountable, and stays outside both the
+"usage" and "supply" bases. This was the one word the original decision left open; it doesn't
+change the decision, so it's recorded here rather than as a new ADR.

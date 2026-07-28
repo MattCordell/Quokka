@@ -25,6 +25,9 @@
       "cl1Cents": 80,
       "cl2Cents": 0,
       "solarCreditCents": 40,
+      "discountCents": 0,
+      "guaranteedTotalCents": 1990,
+      "bestCaseTotalCents": 1990,
       "totalCents": 1990,
       "totalDollars": 19.90,
       "breakdown": "supply (100+5)*2=210 + general 58*30=1740 + cl1 4*20=80 - solar 8*5=40"
@@ -37,9 +40,27 @@
       "cl1Cents": 80,
       "cl2Cents": 0,
       "solarCreditCents": 40,
+      "discountCents": 0,
+      "guaranteedTotalCents": 2220,
+      "bestCaseTotalCents": 2220,
       "totalCents": 2220,
       "totalDollars": 22.20,
       "breakdown": "supply (110+5)*2=230 + peak 20*50=1000 + offpeak 38*25=950 + cl1 4*20=80 - solar 8*5=40"
+    },
+    "plan-flat-discount-demo": {
+      "supplyCents": 210,
+      "generalUsageCents": 1740,
+      "cl1Cents": 80,
+      "cl2Cents": 0,
+      "solarCreditCents": 40,
+      "preDiscountCents": 1990,
+      "guaranteedDiscountCents": 203,
+      "conditionalDiscountCents": 91,
+      "guaranteedTotalCents": 1787,
+      "bestCaseTotalCents": 1696,
+      "guaranteedTotalDollars": 17.87,
+      "bestCaseTotalDollars": 16.96,
+      "breakdown": "pre-discount 210+1740+80-40=1990; guaranteed base (supply 210 + usage 1820)=2030 * 10% = 203 -> guaranteed total 1990-203=1787; conditional base (usage only 1820) * 5% = 91 -> best-case 1990-203-91=1696"
     }
   }
 }

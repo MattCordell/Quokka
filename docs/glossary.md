@@ -39,7 +39,7 @@ A separately-metered circuit (e.g. hot water) on its own **Register**, billed at
 A single flat c/kWh credit applied to exported (**Generation**) energy. No TOU feed-in in V1.
 
 ### Discount
-A reduction on a **Plan**, modelled as **guaranteed** (always applied) vs **conditional** (best-case only), each with its own components (default usage + supply, excluding the **Solar Credit**). Produces two **Bill** totals — guaranteed and best-case ([ADR-0007](adr/0007-discount-guaranteed-vs-conditional.md)).
+A reduction on a **Plan**, modelled as **guaranteed** (always applied) vs **conditional** (best-case only), each with its own components (default usage + supply, excluding the **Solar Credit**). Record shape: `{id, label, kind: guaranteed|conditional, percent, components: [usage|supply, ...]}` — `usage` means combined General + CL1 + CL2 usage cost (the same combined-usage convention as the **Supply Charge**, ADR-0002). Multiple discounts on one Plan are additive, never compounded. Produces two **Bill** totals — guaranteed and best-case ([ADR-0007](adr/0007-discount-guaranteed-vs-conditional.md)).
 
 ---
 
@@ -96,7 +96,7 @@ The count that multiplies the **Supply Charge**: **calendar days in the selected
 The normalisation "annual" applies so it is always a true 365-day figure regardless of the loaded span (which is **provider-dependent** — weeks to ~2 years). If ≥ 365 days exist, use the **most recent 365 days** (never sum a multi-year span raw); if < 365, scale **each TOU band's kWh and the supply day-count** by `365/days_available` (preserving usage shape), labelled an *estimate* with a **seasonal-bias** warning ([ADR-0006](adr/0006-annual-extrapolation.md)).
 
 ### Bill
-The computed result for one **Plan** over one **Billing Period**: `Supply + Usage + Controlled Load − Solar Credit`, then **Discount** applied. All rates GST-inclusive. Components computed at full precision; **only the final total is rounded** to the cent, and a **net-credit total may be negative** ([ADR-0004](adr/0004-rounding-and-bill-sign.md)).
+The computed result for one **Plan** over one **Billing Period**: `Supply + Usage + Controlled Load − Solar Credit`, then **Discount** applied. All rates GST-inclusive. Components computed at full precision; **only the two totals are rounded** to the cent (independently, from the full-precision pre-discount base — never one total minus a rounded discount), and a **net-credit total may be negative** ([ADR-0004](adr/0004-rounding-and-bill-sign.md)). A Bill also carries a **non-actual day count**: the number of distinct in-period days where any counted register resolved to a non-actual (estimated/substituted) quality flag, deduped across registers ([ADR-0003](adr/0003-quality-flag-handling.md)).
 
 ### Solar Credit
 `Generation kWh × Feed-in Rate`, subtracted from the **Bill**.

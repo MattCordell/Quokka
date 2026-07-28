@@ -4,7 +4,8 @@ import type { FlatPlan } from '../plan/types';
 import type { Bill, CategoryUsage, Period } from './types';
 import { daysInPeriod } from './period';
 import { aggregateUsage } from './aggregate';
-import { finalizeTotal, priceSupplyClSolar } from './common';
+import { finalizeBill, priceSupplyClSolar } from './common';
+import { priceDiscounts } from './discount';
 
 /**
  * Prices a flat-rate Plan against an already-aggregated CategoryUsage. `aggregateUsage` doesn't
@@ -23,9 +24,14 @@ export function priceFlatBill(
 
   const generalUsageCents = agg.kwhByCategory.General * plan.usage.generalRateCentsPerKwh;
 
-  const totalCents = finalizeTotal(
+  const discounts = priceDiscounts(plan.discounts, {
+    supplyCents,
+    usageCents: generalUsageCents + cl1Cents + cl2Cents,
+  });
+  const totals = finalizeBill(
     [supplyCents, generalUsageCents, cl1Cents, cl2Cents],
     solarCreditCents,
+    discounts,
   );
 
   return {
@@ -39,8 +45,10 @@ export function priceFlatBill(
     cl2Applicable,
     cl2Cents,
     solarCreditCents,
-    totalCents,
+    ...totals,
+    discountLines: discounts.lines,
     hasNonActualReads: agg.hasNonActualReads,
+    nonActualDayCount: agg.nonActualDayCount,
   };
 }
 

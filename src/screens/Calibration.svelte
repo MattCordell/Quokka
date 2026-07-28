@@ -146,8 +146,12 @@
       <article class="result">
         <h3>Calculated vs actual</h3>
         <dl class="summary">
-          <dt>Calculated total</dt>
-          <dd>{formatCents(result.bill.totalCents)}</dd>
+          <dt>Calculated total (best-case)</dt>
+          <dd>{formatCents(result.bill.bestCaseTotalCents)}</dd>
+          {#if result.bill.guaranteedTotalCents !== result.bill.bestCaseTotalCents}
+            <dt>Calculated total (guaranteed)</dt>
+            <dd>{formatCents(result.bill.guaranteedTotalCents)}</dd>
+          {/if}
           <dt>Actual total</dt>
           <dd>{formatCents(result.actualCents)}</dd>
           <dt class="total-label">Difference</dt>

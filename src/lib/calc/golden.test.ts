@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { parseNem12 } from '../nem12';
 import type { RegisterMapping } from '../mapping/types';
-import type { FlatPlan, TouPlan } from '../plan/types';
+import { isValidPlan, type FlatPlan, type TouPlan } from '../plan/types';
 import { validateBandCoverage } from '../plan/coverage';
 import { computeFlatBill } from './flat';
 import { computeTouBill } from './tou';
@@ -33,7 +33,12 @@ describe('golden calibration (ADR-0015)', () => {
     expect(bill.cl1Cents).toBe(expected.cl1Cents);
     expect(bill.cl2Cents).toBe(expected.cl2Cents);
     expect(bill.solarCreditCents).toBe(expected.solarCreditCents);
-    expect(bill.totalCents).toBe(expected.totalCents);
+    expect(bill.guaranteedTotalCents).toBe(expected.guaranteedTotalCents);
+    expect(bill.bestCaseTotalCents).toBe(expected.bestCaseTotalCents);
+  });
+
+  it('isValidPlan accepts the fixture plan verbatim', () => {
+    expect(isValidPlan(plan)).toBe(true);
   });
 
   it('marks unmapped CL2 not-applicable, distinct from a genuine $0 (ADR-0002)', () => {
@@ -76,6 +81,59 @@ describe('golden calibration TOU (ADR-0015)', () => {
     expect(bill.cl1Cents).toBe(expected.cl1Cents);
     expect(bill.cl2Cents).toBe(expected.cl2Cents);
     expect(bill.solarCreditCents).toBe(expected.solarCreditCents);
-    expect(bill.totalCents).toBe(expected.totalCents);
+    expect(bill.guaranteedTotalCents).toBe(expected.guaranteedTotalCents);
+    expect(bill.bestCaseTotalCents).toBe(expected.bestCaseTotalCents);
+  });
+
+  it('isValidPlan accepts the fixture plan verbatim', () => {
+    expect(isValidPlan(plan)).toBe(true);
+  });
+});
+
+describe('golden calibration discounted flat plan (ADR-0007)', () => {
+  const parsed = parseNem12(readFixture('nem12/nem12-golden.csv'));
+  const usage = parsed.nmis[0];
+  const mapping = JSON.parse(
+    readFixture('mapping/golden-register-mapping.json'),
+  ) as RegisterMapping;
+  const plan = JSON.parse(readFixture('plans/flat-plan-discounted.json')) as FlatPlan;
+  const expected = JSON.parse(readFixture('expected/golden-bills.json')).expectedBills[
+    'plan-flat-discount-demo'
+  ];
+
+  const bill = computeFlatBill(plan, usage, mapping, { start: '2025-07-01', end: '2025-07-02' });
+
+  it('isValidPlan accepts the fixture plan verbatim', () => {
+    expect(isValidPlan(plan)).toBe(true);
+  });
+
+  it('reproduces the discounted bill exactly: $17.87 guaranteed, $16.96 best-case', () => {
+    expect(bill.preDiscountCents).toBe(expected.preDiscountCents);
+    expect(bill.guaranteedDiscountCents).toBe(expected.guaranteedDiscountCents);
+    expect(bill.conditionalDiscountCents).toBe(expected.conditionalDiscountCents);
+    expect(bill.guaranteedTotalCents).toBe(expected.guaranteedTotalCents);
+    expect(bill.bestCaseTotalCents).toBe(expected.bestCaseTotalCents);
+  });
+});
+
+describe('golden calibration ranking (ADR-0007)', () => {
+  const parsed = parseNem12(readFixture('nem12/nem12-golden.csv'));
+  const usage = parsed.nmis[0];
+  const mapping = JSON.parse(
+    readFixture('mapping/golden-register-mapping.json'),
+  ) as RegisterMapping;
+  const period = { start: '2025-07-01', end: '2025-07-02' };
+
+  it('the discounted flat plan is cheapest, then plain flat, then TOU, on bestCaseTotalCents', () => {
+    const flatPlan = JSON.parse(readFixture('plans/flat-plan.json')) as FlatPlan;
+    const discountPlan = JSON.parse(readFixture('plans/flat-plan-discounted.json')) as FlatPlan;
+    const touPlan = JSON.parse(readFixture('plans/tou-plan.json')) as TouPlan;
+
+    const flatBill = computeFlatBill(flatPlan, usage, mapping, period);
+    const discountBill = computeFlatBill(discountPlan, usage, mapping, period);
+    const touBill = computeTouBill(touPlan, usage, mapping, period);
+
+    expect(discountBill.bestCaseTotalCents).toBeLessThan(flatBill.bestCaseTotalCents);
+    expect(flatBill.bestCaseTotalCents).toBeLessThan(touBill.bestCaseTotalCents);
   });
 });
