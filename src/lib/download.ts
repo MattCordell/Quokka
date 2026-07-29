@@ -13,6 +13,11 @@ export function downloadTextFile(
   const anchor = document.createElement('a');
   anchor.href = url;
   anchor.download = filename;
+  // Firefox/Safari require the anchor to be in the document for click() to trigger a download,
+  // and revoking the object URL before the download starts can abort it — so revoke on a
+  // deferred tick, after the click has been dispatched, not synchronously.
+  document.body.appendChild(anchor);
   anchor.click();
-  URL.revokeObjectURL(url);
+  anchor.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 0);
 }

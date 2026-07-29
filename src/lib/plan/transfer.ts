@@ -140,12 +140,7 @@ function looksLikePlanRecord(value: Record<string, unknown>): boolean {
   return PLAN_TOP_KEYS.some((key) => key in value);
 }
 
-function sniffSourcePlans(parsed: unknown): unknown[] | null {
-  if (isRecord(parsed) && Array.isArray(parsed.plans)) return parsed.plans;
-  if (Array.isArray(parsed)) return parsed;
-  if (isRecord(parsed) && looksLikePlanRecord(parsed)) return [parsed];
-  return null;
-}
+type SourcePlansResult = { plans: unknown[] } | { errorMessage: string };
 
 function describeUnrecognisedShape(parsed: unknown): string {
   const seen =
@@ -155,6 +150,30 @@ function describeUnrecognisedShape(parsed: unknown): string {
         ? 'an object with no recognised plan fields'
         : `a ${typeof parsed}`;
   return `Expected a plan object, an array of plans, or a Quokka plan-library export — got ${seen}.`;
+}
+
+/**
+ * Validates the envelope's own `kind`/`schemaVersion` rather than accepting any object with a
+ * `plans` array — otherwise `PLAN_EXPORT_VERSION` is write-only and the forward-migration hook
+ * ADR-0017 justifies the envelope with doesn't actually exist.
+ */
+function resolveSourcePlans(parsed: unknown): SourcePlansResult {
+  if (isRecord(parsed) && Array.isArray(parsed.plans)) {
+    if (parsed.kind !== PLAN_EXPORT_KIND) {
+      return {
+        errorMessage: `This file's "kind" (${JSON.stringify(parsed.kind)}) doesn't match a Quokka plan-library export (expected "${PLAN_EXPORT_KIND}").`,
+      };
+    }
+    if (parsed.schemaVersion !== PLAN_EXPORT_VERSION) {
+      return {
+        errorMessage: `This file's schema version (${JSON.stringify(parsed.schemaVersion)}) isn't supported by this build (expected ${PLAN_EXPORT_VERSION}).`,
+      };
+    }
+    return { plans: parsed.plans };
+  }
+  if (Array.isArray(parsed)) return { plans: parsed };
+  if (isRecord(parsed) && looksLikePlanRecord(parsed)) return { plans: [parsed] };
+  return { errorMessage: describeUnrecognisedShape(parsed) };
 }
 
 function collectUnknownFieldIssues(
@@ -202,6 +221,12 @@ function collectUnknownFieldIssues(
       }
     });
   }
+
+  // A cross-type field (touBands on a flat plan, usage on a TOU plan) is otherwise silently
+  // dropped by projectPlan with no trace — that contradicts "nothing is silently dropped"
+  // (ADR-0017), so it gets the same unknown-field treatment as any other stray key.
+  if (record.type === 'flat_rate' && 'touBands' in record) note('touBands');
+  if (record.type === 'time_of_use' && 'usage' in record) note('usage');
 
   return issues;
 }
@@ -409,19 +434,17 @@ export function parsePlanImport(
     };
   }
 
-  const sourcePlans = sniffSourcePlans(parsed);
-  if (sourcePlans === null) {
+  const resolved = resolveSourcePlans(parsed);
+  if ('errorMessage' in resolved) {
     return {
       ok: false,
-      issues: [
-        { type: 'unrecognised-shape', planIndex: null, message: describeUnrecognisedShape(parsed) },
-      ],
+      issues: [{ type: 'unrecognised-shape', planIndex: null, message: resolved.errorMessage }],
       candidates: [],
     };
   }
 
   const seenIdsInFile = new Set<string>();
-  const candidates = sourcePlans.map((raw, sourceIndex) =>
+  const candidates = resolved.plans.map((raw, sourceIndex) =>
     buildCandidate(raw, sourceIndex, existing, intervalMinutes, seenIdsInFile),
   );
 
@@ -498,7 +521,8 @@ export function copyPlan(plan: Plan, opts: { name?: string; newId?: () => string
  * colliding entry in its existing list position (keeping the existing id) so the table
  * doesn't reshuffle. Non-colliding importable candidates are simply appended.
  *
- * `replace`: returns only the non-skipped candidates; collision choices are moot.
+ * `replace`: returns every importable candidate; collision choices are moot (ADR-0017) — the
+ * whole existing library is gone either way, so there is nothing left to collide with.
  *
  * `importable: false` candidates are never included, whatever the choice. A final pass
  * guarantees id uniqueness across the returned array (catches in-file duplicates).
@@ -513,9 +537,10 @@ export function applyPlanImport(
   const importable = candidates.filter((c) => c.importable);
 
   if (mode === 'replace') {
-    const kept = importable.filter((c) => choices[c.sourceIndex] !== 'skip');
+    // Collision choices are moot in replace mode (ADR-0017) — every importable candidate is
+    // restored regardless of any choice recorded against it (e.g. left over from merge mode).
     return dedupeIds(
-      kept.map((c) => c.plan),
+      importable.map((c) => c.plan),
       newId,
     );
   }
@@ -530,7 +555,12 @@ export function applyPlanImport(
     if (choice === 'skip') continue;
     if (choice === 'overwrite') {
       const existingId = candidate.collision.existingPlanId;
-      next = next.map((p) => (p.id === existingId ? { ...candidate.plan, id: existingId } : p));
+      const targetStillExists = next.some((p) => p.id === existingId);
+      // The collision snapshot is stale as of parsePlanImport time; if the target plan was
+      // since deleted, fall back to appending rather than silently dropping the import.
+      next = targetStillExists
+        ? next.map((p) => (p.id === existingId ? { ...candidate.plan, id: existingId } : p))
+        : [...next, candidate.plan];
     } else {
       next = [
         ...next,

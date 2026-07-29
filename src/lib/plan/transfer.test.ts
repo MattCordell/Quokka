@@ -138,6 +138,26 @@ describe('parsePlanImport: fatal file problems', () => {
     expect(result.issues[0].type).toBe('unrecognised-shape');
     expect(result.issues[0].message.length).toBeGreaterThan(0);
   });
+
+  it('rejects an envelope-shaped file with the wrong "kind"', () => {
+    const file = JSON.parse(exportPlans([validFlatPlan()]));
+    file.kind = 'something-else';
+    const result = parsePlanImport(JSON.stringify(file), []);
+    expect(result.ok).toBe(false);
+    expect(result.issues[0].type).toBe('unrecognised-shape');
+    expect(result.issues[0].message).toContain('kind');
+    expect(result.candidates).toHaveLength(0);
+  });
+
+  it('rejects an envelope-shaped file with an unsupported schemaVersion', () => {
+    const file = JSON.parse(exportPlans([validFlatPlan()]));
+    file.schemaVersion = 999;
+    const result = parsePlanImport(JSON.stringify(file), []);
+    expect(result.ok).toBe(false);
+    expect(result.issues[0].type).toBe('unrecognised-shape');
+    expect(result.issues[0].message).toContain('schema version');
+    expect(result.candidates).toHaveLength(0);
+  });
 });
 
 describe('parsePlanImport: shape validation', () => {
@@ -251,6 +271,28 @@ describe('parsePlanImport: unknown fields', () => {
     ).toBe(true);
     expect('_note' in candidate.plan).toBe(false);
   });
+
+  it('reports a stray touBands on a flat_rate plan as unknown-field rather than silently dropping it', () => {
+    const strayed = { ...validFlatPlan(), touBands: [band()] };
+    const result = parsePlanImport(JSON.stringify([strayed]), []);
+    const candidate = result.candidates[0];
+    expect(candidate.importable).toBe(true);
+    expect(
+      candidate.issues.some((i) => i.type === 'unknown-field' && i.message.includes('touBands')),
+    ).toBe(true);
+    expect('touBands' in candidate.plan).toBe(false);
+  });
+
+  it('reports a stray usage on a time_of_use plan as unknown-field rather than silently dropping it', () => {
+    const strayed = { ...validTouPlan(), usage: { generalRateCentsPerKwh: 30 } };
+    const result = parsePlanImport(JSON.stringify([strayed]), []);
+    const candidate = result.candidates[0];
+    expect(candidate.importable).toBe(true);
+    expect(
+      candidate.issues.some((i) => i.type === 'unknown-field' && i.message.includes('usage')),
+    ).toBe(true);
+    expect('usage' in candidate.plan).toBe(false);
+  });
 });
 
 describe('parsePlanImport + applyPlanImport: collisions', () => {
@@ -316,6 +358,16 @@ describe('parsePlanImport + applyPlanImport: collisions', () => {
     expect(applied[0].name).toBe('Renamed'); // content replaced
     expect(applied[1]).toEqual(other);
   });
+
+  it('overwrite falls back to appending if the collision target was deleted before apply', () => {
+    // The collision snapshot is captured at parsePlanImport time; simulate the target plan
+    // having been deleted from the library before the user confirms the import.
+    const result = collidingResult();
+    const choices: Record<number, ImportChoice> = { 0: 'overwrite' };
+    const applied = applyPlanImport([], result.candidates, choices, 'merge');
+    expect(applied).toHaveLength(1);
+    expect(applied[0].name).toBe('Renamed');
+  });
 });
 
 describe('applyPlanImport: replace mode', () => {
@@ -341,6 +393,21 @@ describe('applyPlanImport: replace mode', () => {
     const applied = applyPlanImport([], result.candidates, {}, 'replace');
     expect(applied).toHaveLength(2);
     expect(new Set(applied.map((p) => p.id)).size).toBe(2);
+  });
+
+  it('ignores a stale per-candidate "skip" choice — every importable candidate is restored', () => {
+    // Regression: replace mode used to honour choices[sourceIndex] === 'skip', so a choice left
+    // over from merge mode (or set against the UI's intent, since replace hides the per-row
+    // radios) could wipe the library and import nothing.
+    const existingA: Plan = { ...validFlatPlan(), id: 'a' };
+    const incomingA = { ...validFlatPlan(), id: 'a', name: 'Renamed A' };
+
+    const result = parsePlanImport(JSON.stringify([incomingA]), [existingA]);
+    const choices: Record<number, ImportChoice> = { 0: 'skip' };
+    const applied = applyPlanImport([existingA], result.candidates, choices, 'replace');
+
+    expect(applied).toHaveLength(1);
+    expect(applied[0].name).toBe('Renamed A');
   });
 });
 

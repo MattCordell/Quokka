@@ -234,7 +234,14 @@
     importMode = 'merge';
     cancelImport();
 
-    const text = await file.text();
+    let text: string;
+    try {
+      text = await file.text();
+    } catch (e) {
+      importError = `Could not read the file: ${e instanceof Error ? e.message : String(e)}`;
+      return;
+    }
+
     const result = parsePlanImport(text, plans);
     if (result.candidates.length === 0) {
       importError = result.issues[0]?.message ?? 'Import failed.';

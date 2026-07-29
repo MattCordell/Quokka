@@ -267,15 +267,10 @@ const END_TIME_PATTERN = /^([01]\d|2[0-3]):[0-5]\d$|^24:00$/;
 
 /**
  * Exported so the plan editor can validate one discount row without building a whole plan.
- * Deliberately does not reject duplicate components (parity with TouBand.days; the pricer uses
- * `.includes()`) or duplicate ids across a plan's discount list.
+ * Delegates to `discountShapeIssues` so the rules live in exactly one place. Deliberately does
+ * not reject duplicate components (parity with TouBand.days; the pricer uses `.includes()`) or
+ * duplicate ids across a plan's discount list.
  */
 export function isValidDiscount(value: unknown): value is Discount {
-  if (!isRecord(value)) return false;
-  if (typeof value.id !== 'string' || value.id === '') return false;
-  if (typeof value.label !== 'string') return false;
-  if (!(DISCOUNT_KINDS as readonly string[]).includes(value.kind as string)) return false;
-  if (!isFiniteNumber(value.percent) || value.percent < 0 || value.percent > 100) return false;
-  if (!Array.isArray(value.components) || value.components.length === 0) return false;
-  return value.components.every((c) => (DISCOUNT_COMPONENTS as readonly string[]).includes(c));
+  return discountShapeIssues(value, 'discount').length === 0;
 }
