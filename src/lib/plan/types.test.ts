@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { isValidDiscount, isValidPlan } from './types';
+import { isValidDiscount, isValidPlan, validatePlanShape } from './types';
 import type { Discount, FlatPlan, TouBand, TouPlan } from './types';
 
 function validFlatPlan(): FlatPlan {
@@ -174,6 +174,55 @@ describe('isValidPlan', () => {
 
   it('rejects an unrecognised plan type', () => {
     expect(isValidPlan({ ...validFlatPlan(), type: 'demand' })).toBe(false);
+  });
+});
+
+describe('validatePlanShape', () => {
+  it('accepts a well-formed plan with no issues', () => {
+    expect(validatePlanShape(validFlatPlan())).toEqual({ ok: true, issues: [] });
+  });
+
+  it('names the field path of an invalid usage rate', () => {
+    const result = validatePlanShape({
+      ...validFlatPlan(),
+      usage: { generalRateCentsPerKwh: 'oops' },
+    });
+    expect(result.ok).toBe(false);
+    expect(result.issues.map((i) => i.field)).toContain('usage.generalRateCentsPerKwh');
+  });
+
+  it('names the field path of an invalid TOU band endTime', () => {
+    const result = validatePlanShape({
+      ...validTouPlan(),
+      touBands: [{ ...validBand(), endTime: '25:00' }],
+    });
+    expect(result.ok).toBe(false);
+    expect(result.issues.map((i) => i.field)).toContain('touBands[0].endTime');
+  });
+
+  it('names the field path of an invalid discount percent', () => {
+    const result = validatePlanShape({
+      ...validFlatPlan(),
+      discounts: [{ ...validDiscount(), percent: 101 }],
+    });
+    expect(result.ok).toBe(false);
+    expect(result.issues.map((i) => i.field)).toContain('discounts[0].percent');
+  });
+
+  it('names the field path of an unrecognised plan type', () => {
+    const result = validatePlanShape({ ...validFlatPlan(), type: 'demand' });
+    expect(result.ok).toBe(false);
+    expect(result.issues.map((i) => i.field)).toContain('type');
+  });
+
+  it('reports a non-object root as a single (root) issue', () => {
+    expect(validatePlanShape(null).issues.map((i) => i.field)).toEqual(['(root)']);
+    expect(validatePlanShape(42).ok).toBe(false);
+  });
+
+  it('isValidPlan stays a thin wrapper over validatePlanShape', () => {
+    const plan = validFlatPlan();
+    expect(isValidPlan(plan)).toBe(validatePlanShape(plan).ok);
   });
 });
 

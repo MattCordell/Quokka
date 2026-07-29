@@ -20,5 +20,6 @@ Decisions made while grilling the [PRD](../../electricity-comparison-tool-PRD.md
 | [0014](0014-charting-layerchart.md) | Charting: LayerChart (Svelte-native), bundled locally | Accepted |
 | [0015](0015-v1-scope-and-sequencing.md) | V1 walking skeleton + scope; legacy CSV & CDR deferred | Accepted |
 | [0016](0016-nem12-interval-labelling.md) | NEM12 interval labelling confirmed: `values[0]` is the midnight-starting slot | Accepted |
+| [0017](0017-plan-export-format-and-import-conflicts.md) | Plan export is a versioned envelope; import re-validates Band Coverage and prompts per-plan on collision | Accepted |
 
 \* ADR-0004 accepted with a noted open tension (calibration accuracy). See the record.
