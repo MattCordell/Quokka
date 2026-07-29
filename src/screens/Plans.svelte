@@ -8,6 +8,16 @@
     type TouBand,
   } from '../lib/plan/types';
   import { analyzeCoverage, formatTime, parseTime } from '../lib/plan/coverage';
+  import {
+    applyPlanImport,
+    copyPlan,
+    exportPlans,
+    parsePlanImport,
+    planExportFilename,
+    type ImportChoice,
+    type PlanImportResult,
+  } from '../lib/plan/transfer';
+  import { downloadTextFile } from '../lib/download';
   import CoverageStrip from '../components/CoverageStrip.svelte';
 
   interface FormState {
@@ -75,6 +85,12 @@
   let confirmingDeleteId = $state<string | null>(null);
   let editingId = $state<string | null>(null);
   let form = $state<FormState>(emptyForm());
+
+  let importResult = $state<PlanImportResult | null>(null);
+  let importChoices = $state<Record<number, ImportChoice>>({});
+  let importMode = $state<'merge' | 'replace'>('merge');
+  let importError = $state<string | null>(null);
+  let confirmingReplace = $state(false);
 
   // Only meaningful while form.type === 'time_of_use'; null otherwise.
   let coverage = $derived(form.type === 'time_of_use' ? analyzeCoverage(form.touBands, 30) : null);
@@ -189,6 +205,61 @@
     confirmingDeleteId = null;
     if (editingId === id) startCreate();
   }
+
+  function duplicatePlan(plan: Plan) {
+    persist([...plans, copyPlan(plan, { name: `${plan.name} (copy)` })]);
+  }
+
+  function exportAll() {
+    downloadTextFile(planExportFilename(plans), exportPlans(plans));
+  }
+
+  function exportOne(plan: Plan) {
+    downloadTextFile(planExportFilename([plan]), exportPlans([plan]));
+  }
+
+  function cancelImport() {
+    importResult = null;
+    importChoices = {};
+    confirmingReplace = false;
+  }
+
+  async function onImportFileChange(event: Event) {
+    const input = event.currentTarget as HTMLInputElement;
+    const file = input.files?.[0];
+    input.value = ''; // allow re-selecting the same file to retry after an error
+    if (!file) return;
+
+    importError = null;
+    importMode = 'merge';
+    cancelImport();
+
+    const text = await file.text();
+    const result = parsePlanImport(text, plans);
+    if (result.candidates.length === 0) {
+      importError = result.issues[0]?.message ?? 'Import failed.';
+      return;
+    }
+
+    importResult = result;
+    const defaults: Record<number, ImportChoice> = {};
+    for (const candidate of result.candidates) {
+      if (candidate.collision) defaults[candidate.sourceIndex] = 'keep-both';
+    }
+    importChoices = defaults;
+  }
+
+  function confirmMergeImport() {
+    if (!importResult) return;
+    persist(applyPlanImport(plans, importResult.candidates, importChoices, 'merge'));
+    cancelImport();
+  }
+
+  function confirmReplaceImport() {
+    if (!importResult) return;
+    persist(applyPlanImport(plans, importResult.candidates, importChoices, 'replace'));
+    cancelImport();
+  }
 </script>
 
 <section>
@@ -198,6 +269,139 @@
   {#if saveWarning}
     <p class="error" role="alert">Could not save plans on this device: {saveWarning}</p>
   {/if}
+
+  <section class="transfer">
+    <h3>Import / export</h3>
+    <button type="button" onclick={exportAll} disabled={plans.length === 0}>
+      Export all plans
+    </button>
+    <label>
+      Import plans from a JSON file
+      <input type="file" accept=".json,application/json" onchange={onImportFileChange} />
+    </label>
+
+    {#if importError}
+      <p class="error" role="alert">{importError}</p>
+    {/if}
+
+    {#if importResult}
+      <div class="import-review">
+        <fieldset>
+          <legend>Import mode</legend>
+          <label class="inline">
+            <input type="radio" name="importMode" value="merge" bind:group={importMode} />
+            Merge into library
+          </label>
+          <label class="inline">
+            <input type="radio" name="importMode" value="replace" bind:group={importMode} />
+            Replace whole library
+          </label>
+        </fieldset>
+
+        <table>
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th>Retailer</th>
+              <th>Type</th>
+              <th>Status</th>
+              <th><span class="sr-only">Choice</span></th>
+            </tr>
+          </thead>
+          <tbody>
+            {#each importResult.candidates as candidate (candidate.sourceIndex)}
+              <tr>
+                <td>{candidate.plan.name || '(unnamed)'}</td>
+                <td>{candidate.plan.retailer || '(unknown)'}</td>
+                <td>{candidate.plan.type === 'flat_rate' ? 'Flat rate' : 'Time of use'}</td>
+                <td>
+                  {#if !candidate.importable}
+                    {#each candidate.issues.filter((i) => i.type === 'plan-shape' || i.type === 'band-coverage') as issue, i (i)}
+                      <p class="error" role="alert">{issue.message}</p>
+                    {/each}
+                    {#each candidate.issues.filter((i) => i.type === 'inclusive-end-normalised' || i.type === 'unknown-field' || i.type === 'duplicate-id-in-file') as issue, i (i)}
+                      <p class="note">{issue.message}</p>
+                    {/each}
+                  {:else}
+                    {#if candidate.collision}
+                      <p class="note">
+                        Collides (by {candidate.collision.kind}) with "{candidate.collision
+                          .existingLabel}".
+                      </p>
+                    {/if}
+                    {#each candidate.issues.filter((i) => i.type === 'inclusive-end-normalised' || i.type === 'unknown-field' || i.type === 'duplicate-id-in-file') as issue, i (i)}
+                      <p class="note">{issue.message}</p>
+                    {/each}
+                  {/if}
+                </td>
+                <td>
+                  {#if candidate.importable && candidate.collision && importMode === 'merge'}
+                    <fieldset class="choice">
+                      <legend class="sr-only">Choice for {candidate.plan.name}</legend>
+                      <label class="inline">
+                        <input
+                          type="radio"
+                          name="importChoice{candidate.sourceIndex}"
+                          value="skip"
+                          bind:group={importChoices[candidate.sourceIndex]}
+                        />
+                        Skip
+                      </label>
+                      <label class="inline">
+                        <input
+                          type="radio"
+                          name="importChoice{candidate.sourceIndex}"
+                          value="keep-both"
+                          bind:group={importChoices[candidate.sourceIndex]}
+                        />
+                        Keep both
+                      </label>
+                      <label class="inline">
+                        <input
+                          type="radio"
+                          name="importChoice{candidate.sourceIndex}"
+                          value="overwrite"
+                          bind:group={importChoices[candidate.sourceIndex]}
+                        />
+                        Overwrite
+                      </label>
+                    </fieldset>
+                  {/if}
+                </td>
+              </tr>
+            {/each}
+          </tbody>
+        </table>
+
+        {#if importMode === 'merge'}
+          <button
+            type="button"
+            onclick={confirmMergeImport}
+            disabled={!importResult.candidates.some((c) => c.importable)}
+          >
+            Import
+          </button>
+        {:else if confirmingReplace}
+          <p class="note">
+            {importResult.candidates.filter((c) => c.importable).length} imported plans will replace your
+            {plans.length} saved plans.
+          </p>
+          <button type="button" onclick={confirmReplaceImport}>Confirm replace</button>
+          <button type="button" onclick={() => (confirmingReplace = false)}>Cancel</button>
+        {:else}
+          <button
+            type="button"
+            onclick={() => (confirmingReplace = true)}
+            disabled={!importResult.candidates.some((c) => c.importable)}
+          >
+            Replace whole library
+          </button>
+        {/if}
+
+        <button type="button" onclick={cancelImport}>Cancel import</button>
+      </div>
+    {/if}
+  </section>
 
   <form onsubmit={submitForm}>
     <h3>
@@ -429,6 +633,8 @@
           <th>Type</th>
           <th>Discounts</th>
           <th><span class="sr-only">Edit</span></th>
+          <th><span class="sr-only">Duplicate</span></th>
+          <th><span class="sr-only">Export</span></th>
           <th><span class="sr-only">Delete</span></th>
         </tr>
       </thead>
@@ -441,6 +647,12 @@
             <td>{describeDiscounts(p)}</td>
             <td>
               <button type="button" onclick={() => startEdit(p)}>Edit</button>
+            </td>
+            <td>
+              <button type="button" onclick={() => duplicatePlan(p)}>Duplicate</button>
+            </td>
+            <td>
+              <button type="button" onclick={() => exportOne(p)}>Export</button>
             </td>
             <td>
               {#if confirmingDeleteId === p.id}
@@ -467,6 +679,23 @@
   .note {
     color: #666;
     font-size: 0.875rem;
+  }
+
+  .transfer {
+    margin-top: 1rem;
+  }
+
+  .import-review {
+    margin-top: 1rem;
+  }
+
+  .import-review table {
+    margin-top: 0.75rem;
+  }
+
+  fieldset.choice {
+    border: none;
+    padding: 0;
   }
 
   form {

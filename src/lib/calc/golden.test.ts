@@ -4,6 +4,7 @@ import { parseNem12 } from '../nem12';
 import type { RegisterMapping } from '../mapping/types';
 import { isValidPlan, type FlatPlan, type TouPlan } from '../plan/types';
 import { validateBandCoverage } from '../plan/coverage';
+import { applyPlanImport, parsePlanImport } from '../plan/transfer';
 import { computeFlatBill } from './flat';
 import { computeTouBill } from './tou';
 
@@ -135,5 +136,37 @@ describe('golden calibration ranking (ADR-0007)', () => {
 
     expect(discountBill.bestCaseTotalCents).toBeLessThan(flatBill.bestCaseTotalCents);
     expect(flatBill.bestCaseTotalCents).toBeLessThan(touBill.bestCaseTotalCents);
+  });
+});
+
+// issue #10 AC: fixture proof that an imported plan reproduces the golden totals.
+describe('golden calibration import round-trip (issue #10)', () => {
+  const parsed = parseNem12(readFixture('nem12/nem12-golden.csv'));
+  const usage = parsed.nmis[0];
+  const mapping = JSON.parse(
+    readFixture('mapping/golden-register-mapping.json'),
+  ) as RegisterMapping;
+  const period = { start: '2025-07-01', end: '2025-07-02' };
+
+  it('imports flat-plan.json and reproduces the golden $19.90 bill', () => {
+    const importResult = parsePlanImport(readFixture('plans/flat-plan.json'), []);
+    expect(importResult.candidates[0].importable).toBe(true);
+
+    const [importedPlan] = applyPlanImport([], importResult.candidates, {}, 'merge') as [FlatPlan];
+    const bill = computeFlatBill(importedPlan, usage, mapping, period);
+
+    expect(bill.guaranteedTotalCents).toBe(1990);
+    expect(bill.bestCaseTotalCents).toBe(1990);
+  });
+
+  it('imports tou-plan.json and reproduces the golden $22.20 bill', () => {
+    const importResult = parsePlanImport(readFixture('plans/tou-plan.json'), []);
+    expect(importResult.candidates[0].importable).toBe(true);
+
+    const [importedPlan] = applyPlanImport([], importResult.candidates, {}, 'merge') as [TouPlan];
+    const bill = computeTouBill(importedPlan, usage, mapping, period);
+
+    expect(bill.guaranteedTotalCents).toBe(2220);
+    expect(bill.bestCaseTotalCents).toBe(2220);
   });
 });

@@ -9,7 +9,10 @@ The domain model for the tool. The purpose is a single computation: given a **Ho
 ## Plan & Tariff
 
 ### Plan
-A saved, user-authored record describing one retailer offer. Owns a **Tariff**, metadata (name, retailer), and a **Discount** definition. Persisted in browser local storage; import/export as JSON. Not the same as a **Bill** — a Plan is the *rule*, a Bill is the *result* of applying the rule to usage.
+A saved, user-authored record describing one retailer offer. Owns a **Tariff**, metadata (name, retailer), and a **Discount** definition. Persisted in browser local storage; import/export as JSON (see **Plan Export File**). Not the same as a **Bill** — a Plan is the *rule*, a Bill is the *result* of applying the rule to usage.
+
+### Plan Export File
+The JSON shape a **Plan** or the whole plan library is written to and read back from — the user's only backup path, since a Plan otherwise lives only in local storage ([ADR-0008](adr/0008-usage-persistence.md)). Always a versioned envelope on export — `{kind: "quokka-plan-library", schemaVersion, exportedAt, plans: Plan[]}` — with its own version number, independent of the storage schema version, so a storage-format bump can't invalidate an old backup file. Import is more permissive than export: it also accepts a bare `Plan[]` or a bare single `Plan` object (so a hand-authored fixture or a single-plan share works without wrapping). An imported **TOU** plan re-runs full **Band Coverage** validation — the same bar as the plan editor — including the documented inclusive-to-exclusive end transform (e.g. `20:59` → `21:00`) ([ADR-0001](adr/0001-tou-band-boundary-model.md)); a Gap, Overlap, or misaligned boundary blocks that plan from being imported rather than being silently accepted. Collisions against the existing library (by id, then by name+retailer) are surfaced per plan rather than silently overwritten ([ADR-0017](adr/0017-plan-export-format-and-import-conflicts.md)).
 
 ### Tariff
 The rate structure inside a **Plan**: a **Supply Charge** component, a **Usage Charge** component (either flat or **TOU**), optional **Controlled Load** rates, and a **Feed-in Rate**. Either `flat_rate` or `time_of_use`.
