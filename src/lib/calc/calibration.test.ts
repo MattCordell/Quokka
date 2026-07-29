@@ -68,6 +68,14 @@ describe('manualCategoryUsage — ADR-0002 bypass via direct CL entry', () => {
     const agg = manualCategoryUsage(goldenInput);
     expect(agg.kwhByCategory.Generation).toBe(8);
   });
+
+  it('reports daysWithData 0 (not the full period) for an unmapped CL, matching aggregateUsage', () => {
+    const agg = manualCategoryUsage(goldenInput); // cl2Kwh: null -> CL2 unmapped
+    expect(agg.daysWithData.CL2).toBe(0);
+    expect(agg.daysWithData.CL1).toBe(2);
+    expect(agg.daysWithData.General).toBe(2);
+    expect(agg.daysWithData.Generation).toBe(2);
+  });
 });
 
 describe('computeCalibration — ADR-0002 gating reflected in the priced bill', () => {

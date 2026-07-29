@@ -22,6 +22,17 @@ export interface CategoryUsage {
   /** Any counted interval (non-Ignore register, in period) resolved to a non-'A' flag. */
   hasNonActualReads: boolean;
   nonActualDayCount: number;
+  /**
+   * Per-category distinct in-period days (deduped within that category's mapped, non-Ignore
+   * registers) with any data at all, regardless of quality flag — a gap-coverage count, not a
+   * quality count. Kept per-category (not unioned across categories) because one fully-covered
+   * register must never mask a gap in another: e.g. a solar Generation register reading every
+   * day of the window would otherwise hide a 165-day gap in the General register that shares the
+   * same period, understating the General charge — the dominant line on every bill — with no
+   * disclosure. Compared against `daysInPeriod` per category to surface that shortfall, and
+   * against `ANNUAL_DAYS` to decide how much (if any) annual extrapolation a category needs.
+   */
+  daysWithData: Record<UsageCategory, number>;
 }
 
 /** One TOU band's contribution to generalUsageCents. Full precision (ADR-0004). */
@@ -75,4 +86,20 @@ export interface Bill extends BillTotals {
 
   hasNonActualReads: boolean;
   nonActualDayCount: number;
+
+  /**
+   * Non-null when this Bill was priced under ADR-0006 annual extrapolation: `factor` is the
+   * General **category**'s scaling factor (ANNUAL_DAYS / sampledDays), `sampledDays` the actual
+   * General-category day-coverage it was derived from — the same descriptor is passed to both a
+   * flat and a TOU bill priced over the same period, so it's comparable across plan types. It
+   * describes that category-level projection only: a TOU bill's `bands` are scaled per-day-of-week
+   * (`scaleGeneralWeek`), a different — and, for an uneven sample, different-valued — factor per
+   * day-of-week, so `factor`/`sampledDays` must not be read as "the number `bands` was multiplied
+   * by". `null` for a measured bill (including a >=365-day annual window with full coverage, where
+   * nothing was scaled). Carried on the Bill itself — not left as a caller-local flag — so any
+   * future consumer (an export, a persisted comparison, `computeCalibration`) can tell a projected
+   * figure from a measured one without re-deriving it from UI state (ADR-0013: the engine is the
+   * framework-agnostic source of truth for billing math, extrapolation included).
+   */
+  extrapolation: { factor: number; sampledDays: number } | null;
 }

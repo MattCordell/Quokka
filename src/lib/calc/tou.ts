@@ -1,6 +1,6 @@
 import type { NmiData } from '../nem12';
 import type { RegisterMapping } from '../mapping/types';
-import type { TouPlan, TouDay } from '../plan/types';
+import { TOU_DAYS, type TouPlan, type TouDay } from '../plan/types';
 import { formatTime, parseTime, slotInBand } from '../plan/coverage';
 import { CalcError, type Bill, type BandCharge, type CategoryUsage, type Period } from './types';
 import { daysInPeriod, dayInPeriod, dayOfWeek } from './period';
@@ -27,17 +27,29 @@ export function parseWeekSlotKey(key: string): { day: TouDay; minute: number } {
 
 /**
  * A plan-independent weekly profile of General kWh, keyed by `${TouDay}|${startMinute}` (the
- * interval's own day-of-week and minute-of-day). Registers mapped to General are summed
- * (ADR-0011); `quality === 'N'` zeroes that interval, matching aggregateUsage's rule. Computed
- * once so multiple TOU plans can be priced against the same profile (mirrors the
- * aggregate-once/price-many split aggregateUsage already gives flat plans).
+ * interval's own day-of-week and minute-of-day), plus the distinct in-period dates behind it,
+ * bucketed by day-of-week (deduped across General registers, matching the `week` map's own
+ * dedup). Registers mapped to General are summed (ADR-0011); `quality === 'N'` zeroes that
+ * interval, matching aggregateUsage's rule. `daysByDow` is the actual sample size behind each
+ * day-of-week's slice of `week` — annual extrapolation (ADR-0006, `scaleGeneralWeek`) needs it
+ * per-day-of-week rather than as one combined day count, because a short or unevenly-distributed
+ * sample doesn't represent every weekday/weekend day equally (e.g. a 2-day sample covering only a
+ * Tuesday and a Wednesday has zero data for the other five days of the week — no scaling factor
+ * can manufacture what was never measured). Both are returned from one pass over the registers
+ * (rather than two separate functions each re-walking the same data) so multiple TOU plans can be
+ * priced against the same profile (mirrors the aggregate-once/price-many split aggregateUsage
+ * already gives flat plans).
  */
 export function aggregateGeneralWeek(
   usage: NmiData,
   mapping: RegisterMapping,
   period: Period,
-): Map<string, number> {
+): { week: Map<string, number>; daysByDow: Record<TouDay, number> } {
   const week = new Map<string, number>();
+  const datesByDow = Object.fromEntries(TOU_DAYS.map((day) => [day, new Set<string>()])) as Record<
+    TouDay,
+    Set<string>
+  >;
 
   for (const register of usage.registers) {
     if (mapping.registers[register.registerId] !== 'General') continue;
@@ -52,6 +64,7 @@ export function aggregateGeneralWeek(
     for (const day of register.days) {
       if (!dayInPeriod(day.date, period)) continue;
       const dow = dayOfWeek(day.date);
+      datesByDow[dow].add(day.date);
 
       for (let i = 0; i < day.values.length; i++) {
         const kwh = resolveIntervalKwh(day.quality[i], day.values[i]);
@@ -61,7 +74,11 @@ export function aggregateGeneralWeek(
     }
   }
 
-  return week;
+  const daysByDow = Object.fromEntries(
+    TOU_DAYS.map((day) => [day, datesByDow[day].size]),
+  ) as Record<TouDay, number>;
+
+  return { week, daysByDow };
 }
 
 /**
@@ -69,6 +86,8 @@ export function aggregateGeneralWeek(
  * Each (day, minute) slot is assigned to the single band whose days include that day-of-week
  * and whose half-open [start,end) contains that minute (ADR-0001) — the same slotInBand test
  * coverage validation uses, so a plan that passed Band Coverage has no unassigned slot here.
+ *
+ * `extrapolation` is opaque passthrough metadata (ADR-0006), same contract as `priceFlatBill`'s.
  */
 export function priceTouBill(
   plan: TouPlan,
@@ -76,6 +95,7 @@ export function priceTouBill(
   generalWeek: Map<string, number>,
   days: number,
   period: Period,
+  extrapolation: Bill['extrapolation'] = null,
 ): Bill {
   const { supplyCents, cl1Applicable, cl1Cents, cl2Applicable, cl2Cents, solarCreditCents } =
     priceSupplyClSolar(plan, agg, days);
@@ -140,6 +160,7 @@ export function priceTouBill(
     discountLines: discounts.lines,
     hasNonActualReads: agg.hasNonActualReads,
     nonActualDayCount: agg.nonActualDayCount,
+    extrapolation,
   };
 }
 
@@ -152,6 +173,6 @@ export function computeTouBill(
 ): Bill {
   const days = daysInPeriod(period);
   const agg = aggregateUsage(usage, mapping, period);
-  const generalWeek = aggregateGeneralWeek(usage, mapping, period);
-  return priceTouBill(plan, agg, generalWeek, days, period);
+  const { week } = aggregateGeneralWeek(usage, mapping, period);
+  return priceTouBill(plan, agg, week, days, period);
 }

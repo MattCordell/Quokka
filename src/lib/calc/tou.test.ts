@@ -144,7 +144,7 @@ describe('priceTouBill / computeTouBill', () => {
 
     const viaCompute = computeTouBill(plan, usage, mapping, period);
     const agg = aggregateUsage(usage, mapping, period);
-    const generalWeek = aggregateGeneralWeek(usage, mapping, period);
+    const { week: generalWeek } = aggregateGeneralWeek(usage, mapping, period);
     const days = daysInPeriod(period);
     const viaPrice = priceTouBill(plan, agg, generalWeek, days, period);
 
@@ -246,5 +246,66 @@ describe('priceTouBill / computeTouBill', () => {
     const bill = computeTouBill(plan, usage, mapping, period);
 
     expect(bill.discountLines[0].baseCents).toBe(bill.generalUsageCents + bill.cl1Cents);
+  });
+
+  it('extrapolation defaults to null and is carried through unchanged when supplied', () => {
+    const usage = nmiData([register()]);
+    const mapping: RegisterMapping = { nmi: '6407000000', registers: { E1: 'General' } };
+    const agg = aggregateUsage(usage, mapping, period);
+    const { week: generalWeek } = aggregateGeneralWeek(usage, mapping, period);
+    const plan = touPlan([PEAK, OFFPEAK_WEEKDAY]);
+
+    expect(priceTouBill(plan, agg, generalWeek, 1, period).extrapolation).toBeNull();
+
+    const extrapolation = { factor: 182.5, sampledDays: 2 };
+    expect(priceTouBill(plan, agg, generalWeek, 1, period, extrapolation).extrapolation).toEqual(
+      extrapolation,
+    );
+  });
+});
+
+describe('aggregateGeneralWeek — daysByDow', () => {
+  it('counts one distinct date per day of the week it falls on', () => {
+    const usage = nmiData([register()]); // single Tuesday
+    const mapping: RegisterMapping = { nmi: '6407000000', registers: { E1: 'General' } };
+
+    const { daysByDow } = aggregateGeneralWeek(usage, mapping, period);
+
+    expect(daysByDow.TUE).toBe(1);
+    expect(daysByDow.MON).toBe(0);
+    expect(daysByDow.WED).toBe(0);
+  });
+
+  it('dedupes the same date across two General registers (ADR-0011)', () => {
+    const usage = nmiData([
+      register({ registerId: 'E1' }),
+      register({ registerId: 'E2', nmiSuffix: 'E2' }),
+    ]);
+    const mapping: RegisterMapping = {
+      nmi: '6407000000',
+      registers: { E1: 'General', E2: 'General' },
+    };
+
+    expect(aggregateGeneralWeek(usage, mapping, period).daysByDow.TUE).toBe(1);
+  });
+
+  it('excludes a non-General register and an out-of-period day', () => {
+    const usage = nmiData([
+      register({ registerId: 'E1' }), // Tuesday, in period
+      register({
+        registerId: 'E3',
+        nmiSuffix: 'E3',
+        days: [day({ date: '20250705' })], // Saturday, mapped CL1 not General
+      }),
+    ]);
+    const mapping: RegisterMapping = {
+      nmi: '6407000000',
+      registers: { E1: 'General', E3: 'CL1' },
+    };
+
+    const { daysByDow } = aggregateGeneralWeek(usage, mapping, period);
+
+    expect(daysByDow.TUE).toBe(1);
+    expect(daysByDow.SAT).toBe(0);
   });
 });

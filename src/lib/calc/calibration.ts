@@ -32,9 +32,15 @@ export interface CalibrationResult {
  * Shapes manually-entered category totals into a CategoryUsage. A `null` CL leaves its
  * `mappedCategories` flag false, so `priceFlatBill`'s ADR-0002 gate renders it "not applicable";
  * entering a figure (including 0) marks that circuit as present. Solar is never gated. Manual
- * totals aren't interval reads, so `hasNonActualReads` is always false.
+ * totals aren't interval reads, so `hasNonActualReads` is always false, and a mapped category's
+ * `daysWithData` is set to the full period length — a manually-entered total carries no gaps to
+ * disclose. An unmapped CL1/CL2 gets `daysWithData` 0, not the full period, matching
+ * `aggregateUsage`'s own convention that an unmapped category has no data (ADR-0002) — asserting
+ * full coverage for a circuit that isn't there would be the one `daysWithData` invariant broken
+ * on purpose.
  */
 export function manualCategoryUsage(input: ManualBillInput): CategoryUsage {
+  const days = daysInPeriod(input.period);
   return {
     kwhByCategory: {
       General: input.generalKwh,
@@ -52,6 +58,13 @@ export function manualCategoryUsage(input: ManualBillInput): CategoryUsage {
     },
     hasNonActualReads: false,
     nonActualDayCount: 0,
+    daysWithData: {
+      General: days,
+      CL1: input.cl1Kwh !== null ? days : 0,
+      CL2: input.cl2Kwh !== null ? days : 0,
+      Generation: days,
+      Ignore: 0,
+    },
   };
 }
 
